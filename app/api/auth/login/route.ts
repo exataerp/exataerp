@@ -1,4 +1,3 @@
-import { createServerClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
@@ -14,71 +13,57 @@ export async function POST(request: Request) {
 
     const cleanEmail = email.trim().toLowerCase()
 
-    // 1. Tenta login direto via Supabase Auth
-    let response = NextResponse.json({ success: true })
-
-    const supabase = createServerClient(
+    // Usa o client anônimo para autenticar (igual ao browser, mas no servidor)
+    const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return []
-          },
-          setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              response.cookies.set(name, value, options)
-            )
-          },
-        },
-      }
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
 
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email: cleanEmail,
       password: password,
     })
 
-    if (authError) {
-      console.error('API Login Auth error:', authError)
-
-      // Fallback de verificação: verifica se o usuário existe em perfis
-      const supabaseAdmin = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      )
-
-      const { data: perfil } = await supabaseAdmin
-        .from('perfis')
-        .select('id, email')
-        .eq('email', cleanEmail)
-        .single()
-
-      if (!perfil) {
-        return NextResponse.json({
-          error: `O e-mail "${cleanEmail}" não está cadastrado em nenhuma empresa no sistema.`,
-        }, { status: 404 })
-      }
-
-      if (authError.message.includes('Invalid login credentials')) {
-        return NextResponse.json({
-          error: 'Senha incorreta. Verifique a senha digitada ou use a recuperação de senha.',
-        }, { status: 400 })
-      }
-
-      if (authError.message.includes('Email not confirmed')) {
-        return NextResponse.json({
-          error: 'E-mail ainda não confirmado no Supabase. Marque "Auto Confirm User" no painel.',
-        }, { status: 400 })
-      }
-
-      return NextResponse.json({ error: `Erro no Supabase Auth: ${authError.message}` }, { status: 400 })
+    if (error) {
+      // Retorna o erro REAL do Supabase para diagnóstico
+      return NextResponse.json({
+        error: `Supabase Auth: ${error.message}`,
+        supabase_status: error.status,
+      }, { status: 401 })
     }
 
+    if (!data.session) {
+      return NextResponse.json({ error: 'Sessão não criada pelo Supabase.' }, { status: 401 })
+    }
+
+    // Sucesso — retorna o access_token para o client salvar
+    const response = NextResponse.json({
+      success: true,
+      access_token: data.session.access_token,
+    })
+
+    // Seta os cookies de sessão
+    const { access_token, refresh_token, expires_at } = data.session
+    const isProduction = process.env.NODE_ENV === 'production'
+
+    response.cookies.set('sb-access-token', access_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      maxAge: 3600,
+      path: '/',
+    })
+    response.cookies.set('sb-refresh-token', refresh_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365,
+      path: '/',
+    })
+
     return response
+
   } catch (err: any) {
-    console.error('API Login Error:', err)
-    return NextResponse.json({ error: err.message || 'Erro interno no servidor' }, { status: 500 })
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
