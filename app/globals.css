@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -35,7 +37,7 @@
   --card-foreground: 222.2 84% 4.9%;
   --popover: 0 0% 100%;
   --popover-foreground: 222.2 84% 4.9%;
-  --card-alpha: 0.82;
+  --card-alpha: 0.95;
 
   /* Azul — identidade visual atual */
   --primary: 211 100% 50%;
@@ -50,24 +52,22 @@
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 210 40% 98%;
   --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 96%;
   --ring: 211 100% 50%;
   --radius: 0.5rem;
 }
 
 .dark {
-  /* Modo Escuro: Preto premium, estilo macOS dark — não mais azul como estrutura */
+  /* Modo Escuro: Preto premium */
   --background: 220 15% 4%;
   --foreground: 210 20% 97%;
 
-  /* Cards/menus/painéis: cinza-fumê neutro translúcido, não azulado */
   --card: 220 12% 11%;
   --card-foreground: 210 20% 97%;
   --popover: 220 14% 10%;
   --popover-foreground: 210 20% 97%;
-  --card-alpha: 0.64;
+  --card-alpha: 0.85;
 
-  /* Azul — só como cor de destaque (botões, ativo, foco), nunca como fundo estrutural */
   --primary: 212 100% 54%;
   --primary-foreground: 0 0% 100%;
 
@@ -77,7 +77,7 @@
   --muted-foreground: 215 12% 68%;
   --accent: 212 100% 54%;
   --accent-foreground: 0 0% 100%;
-  --destructive: 0 62.8% 30.6%;
+  --destructive: 0 62.8% 40.6%;
   --destructive-foreground: 210 40% 98%;
   --border: 220 10% 20%;
   --input: 220 12% 12%;
@@ -90,22 +90,22 @@
 
 body {
   color: hsl(var(--foreground));
-  background:
-    radial-gradient(circle at 15% 20%, hsl(211 100% 50% / 0.10), transparent 32%),
-    radial-gradient(circle at 85% 80%, hsl(199 92% 68% / 0.08), transparent 34%),
-    hsl(var(--background));
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(circle at 15% 20%, hsl(211 100% 50% / 0.08), transparent 32%),
+    radial-gradient(circle at 85% 80%, hsl(199 92% 68% / 0.06), transparent 34%);
   background-attachment: fixed;
 }
 
 .dark body {
-  background:
+  background-color: hsl(var(--background));
+  background-image:
     radial-gradient(circle at 12% 18%, hsl(0 0% 100% / 0.04), transparent 22%),
     radial-gradient(circle at 85% 78%, hsl(212 100% 54% / 0.05), transparent 30%),
     linear-gradient(180deg, #000000 0%, #050608 45%, #0a0b0d 100%);
   background-attachment: fixed;
 }
 
-/* Vidro fosco aplicado a todo elemento que usa bg-card ou bg-popover (cards, painéis, dropdowns, modais) */
 .bg-card,
 .bg-popover {
   backdrop-filter: blur(20px) saturate(160%);
@@ -123,12 +123,10 @@ body {
     inset 0 -1px 0 rgb(0 0 0 / 0.18);
 }
 
-/* Navegadores sem suporte a backdrop-filter: cai pra fundo opaco, sem perder legibilidade */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .bg-card, .bg-popover { --card-alpha: 1; }
 }
 
-/* Respeita configuração de acessibilidade do sistema */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -137,7 +135,6 @@ body {
   }
 }
 
-/* Classe usada em calculations-dashboard */
 .glass-panel {
   background-color: hsl(var(--card) / var(--card-alpha));
   backdrop-filter: blur(20px) saturate(160%);
@@ -149,7 +146,6 @@ body {
   -webkit-backdrop-filter: blur(26px) saturate(180%);
 }
 
-/* Scrollbar customizada usada em draggable-operations-list e pcp-tab */
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -165,7 +161,6 @@ body {
   background-color: hsl(var(--muted-foreground));
 }
 
-/* Brilho que percorre barras de progresso "em andamento" (ex: OP ativa) */
 @keyframes shimmer-sweep {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(250%); }
