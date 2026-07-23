@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useTheme } from "next-themes"
 import { supabase } from "@/components/supabase"
+import { useAuth } from "@/contexts/AuthContext"
 import { useToast } from "@/hooks/use-toast"
 import { GBOTab } from "@/components/gbo-tab"
 import { PCPTab } from "@/components/pcp-tab"
@@ -18,8 +19,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
-  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle
+  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench,
+  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut
 } from "lucide-react"
 
 type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes"
@@ -36,32 +37,12 @@ const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.Eleme
   { id: "relatorios", label: "Relatórios",        sublabel: "Análise de Desempenho",  icon: LineChart       },
 ]
 
-const STORAGE_KEY = "exata_empresa_id"
-const STORAGE_TAB  = "exata_aba_ativa"
+const STORAGE_TAB = "exata_aba_ativa"
 
 export default function ExataApp() {
-  const [empresaAtivaId, setEmpresaAtivaId] = useState<string | null>(null)
-  const [empresaName,    setEmpresaName]    = useState("")
-  const [authLoading,    setAuthLoading]    = useState(true)
-
-  // tela de código
-  const [codigoInput,  setCodigoInput]  = useState("")
-  const [codigoError,  setCodigoError]  = useState("")
-  const [isChecking,   setIsChecking]   = useState(false)
-
-  // nova fábrica
-  const [showNova,     setShowNova]     = useState(false)
-  const [nomeNova,     setNomeNova]     = useState("")
-  const [isCriando,    setIsCriando]    = useState(false)
-
-  // tela de confirmação do código recém-criado
-  const [codigoNovo,   setCodigoNovo]   = useState<string | null>(null)
-  const [copiado,      setCopiado]      = useState(false)
-
-  // código visível nas configurações
-  const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
-  const [showCodigo,   setShowCodigo]   = useState(false)
-  const [copiadoConf,  setCopiadoConf]  = useState(false)
+  const { session, loading: authLoading, signOut } = useAuth()
+  const empresaAtivaId = session?.empresa?.id ?? null
+  const empresaName    = session?.empresa?.nome ?? ""
 
   // configurações
   const [defaultTime,     setDefaultTime]     = useState("")
@@ -100,9 +81,7 @@ export default function ExataApp() {
   const { toast } = useToast()
   const faixaTelaRef = useRef<"celular" | "notebook" | "monitor" | null>(null)
 
-  // --- Sidebar se adapta ao tamanho da tela (notebook menor recolhe sozinho, monitor grande expande) ---
-  // Só reage quando MUDA de faixa de tamanho, então o toggle manual do usuário
-  // continua funcionando livremente enquanto ele ficar na mesma faixa.
+  // --- Sidebar se adapta ao tamanho da tela ---
   useEffect(() => {
     const ajustar = () => {
       const largura = window.innerWidth
@@ -121,45 +100,17 @@ export default function ExataApp() {
   // --- Inicialização ---
   useEffect(() => {
     setMounted(true)
-    const savedId  = localStorage.getItem(STORAGE_KEY)
     const savedTab = localStorage.getItem(STORAGE_TAB) as TabId
     if (savedTab && NAV_ITEMS.find(n => n.id === savedTab)) setActiveTab(savedTab)
-
-    if (savedId) {
-      // Valida que a empresa ainda existe e busca o código
-      supabase
-        .from("empresas")
-        .select("id, nome")
-        .eq("id", savedId)
-        .single()
-        .then(async ({ data, error }) => {
-          if (data) {
-            setEmpresaAtivaId(data.id)
-            setEmpresaName(data.nome)
-            carregarAlertas(data.id)
-            carregarConfFabrica(data.id)
-            carregarTurnos(data.id)
-            // busca o código da fábrica para exibir nas configurações
-            const { data: cod } = await supabase
-              .from("codigos_acesso")
-              .select("codigo")
-              .eq("empresa_id", data.id)
-              .single()
-            if (cod) setCodigoAtual(cod.codigo)
-          } else if (error && error.code === "PGRST116") {
-            // PGRST116 = nenhuma linha encontrada -> empresa realmente não existe mais
-            localStorage.removeItem(STORAGE_KEY)
-          } else if (error) {
-            // Erro de rede/timeout/outro -> NÃO desloga, apenas tenta de novo
-            console.error("Falha ao validar sessão salva, mantendo login local:", error)
-            setEmpresaAtivaId(savedId)
-          }
-          setAuthLoading(false)
-        })
-    } else {
-      setAuthLoading(false)
-    }
   }, [])
+
+  // Carrega dados quando empresa estiver disponível
+  useEffect(() => {
+    if (!empresaAtivaId) return
+    carregarAlertas(empresaAtivaId)
+    carregarConfFabrica(empresaAtivaId)
+    carregarTurnos(empresaAtivaId)
+  }, [empresaAtivaId])
 
   // --- Alertas automáticos ---
   const carregarAlertas = async (empId: string) => {
@@ -207,96 +158,10 @@ export default function ExataApp() {
 
     setAlertas(novosAlertas)
   }
-  const handleCodigo = async () => {
-    if (!codigoInput.trim()) return
-    setIsChecking(true)
-    setCodigoError("")
 
-    // 1. Busca o código
-    const { data: codData, error: codError } = await supabase
-      .from("codigos_acesso")
-      .select("empresa_id")
-      .eq("codigo", codigoInput.trim())
-      .single()
+  // --- Sair ---
+  const handleSair = () => signOut()
 
-    if (codError || !codData) {
-      setCodigoError("Código não encontrado. Verifique e tente novamente.")
-      setIsChecking(false)
-      return
-    }
-
-    // 2. Busca a empresa separadamente
-    const { data: empData, error: empError } = await supabase
-      .from("empresas")
-      .select("id, nome")
-      .eq("id", codData.empresa_id)
-      .single()
-
-    if (empError || !empData) {
-      setCodigoError("Erro ao carregar os dados da fábrica. Tente novamente.")
-      setIsChecking(false)
-      return
-    }
-
-    localStorage.setItem(STORAGE_KEY, empData.id)
-    setEmpresaAtivaId(empData.id)
-    setEmpresaName(empData.nome)
-    setCodigoAtual(codigoInput.trim())
-    carregarAlertas(empData.id)
-    carregarConfFabrica(empData.id)
-    carregarTurnos(empData.id)
-    setIsChecking(false)
-  }
-
-  // --- Criar nova fábrica ---
-  const handleCriarFabrica = async () => {
-    if (!nomeNova.trim()) return
-    setIsCriando(true)
-
-    // 1. Cria a empresa
-    const { data: emp, error: empError } = await supabase
-      .from("empresas")
-      .insert({ nome: nomeNova.trim() })
-      .select("id, nome")
-      .single()
-
-    if (empError || !emp) {
-      toast({ title: "Erro ao criar fábrica", description: empError?.message, variant: "destructive" })
-      setIsCriando(false)
-      return
-    }
-
-    // 2. Gera código alfanumérico de 6 chars sem ambiguidade
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    let codigo = ""
-    for (let i = 0; i < 6; i++) codigo += chars[Math.floor(Math.random() * chars.length)]
-
-    const { error: codError } = await supabase
-      .from("codigos_acesso")
-      .insert({ codigo, empresa_id: emp.id })
-
-    if (codError) {
-      toast({ title: "Fábrica criada, mas erro ao gerar código", description: codError.message, variant: "destructive" })
-    }
-
-    localStorage.setItem(STORAGE_KEY, emp.id)
-    setEmpresaAtivaId(emp.id)
-    setEmpresaName(emp.nome)
-    setCodigoAtual(codigo)
-    setCodigoNovo(codigo)  // dispara tela de confirmação
-    setShowNova(false)
-    setNomeNova("")
-    setIsCriando(false)
-  }
-
-  // --- Sair (limpa localStorage) ---
-  const handleSair = () => {
-    localStorage.removeItem(STORAGE_KEY)
-    setEmpresaAtivaId(null)
-    setEmpresaName("")
-    setCodigoAtual(null)
-    setCodigoNovo(null)
-  }
 
   // --- Salvar configurações ---
   const handleSaveConf = async () => {
@@ -432,7 +297,7 @@ export default function ExataApp() {
   }
 
   // ----------------------------------------------------------------
-  // TELA DE CARREGAMENTO
+  // TELA DE CARREGAMENTO (enquanto AuthContext valida a sessão)
   // ----------------------------------------------------------------
   if (authLoading) {
     return (
@@ -443,114 +308,9 @@ export default function ExataApp() {
   }
 
   // ----------------------------------------------------------------
-  // TELA DE ACESSO (sem empresa ativa)
-  // ----------------------------------------------------------------
-  if (!empresaAtivaId) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm border border-border/50 bg-card p-8 shadow-2xl rounded-2xl space-y-6">
-          <div className="text-center space-y-1">
-            <h1 className="text-3xl font-black tracking-tighter text-foreground uppercase">Exata</h1>
-            <p className="text-xs text-muted-foreground font-medium">Sistema de controle industrial</p>
-          </div>
-
-          {!showNova ? (
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider pl-1">
-                  Código da Fábrica
-                </label>
-                <input
-                  type="text"
-                  value={codigoInput}
-                  onChange={(e) => setCodigoInput(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === "Enter" && handleCodigo()}
-                  className="w-full h-14 px-4 rounded-xl border border-border bg-input text-foreground text-xl outline-none focus:ring-2 focus:ring-primary transition-all tracking-[0.3em] font-black text-center uppercase"
-                  placeholder="MX7K2P"
-                  maxLength={10}
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                  spellCheck={false}
-                />
-              </div>
-              {codigoError && (
-                <p className="text-xs font-bold text-destructive text-center bg-destructive/10 p-2 rounded-lg">
-                  {codigoError}
-                </p>
-              )}
-              <button
-                onClick={handleCodigo}
-                disabled={isChecking}
-                className="w-full h-12 flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold uppercase tracking-widest text-xs rounded-xl shadow-md hover:opacity-90 transition-all disabled:opacity-50"
-              >
-                <Key className="h-4 w-4" />
-                {isChecking ? "Verificando..." : "Acessar Fábrica"}
-              </button>
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border" />
-                </div>
-                <div className="relative flex justify-center">
-                  <span className="bg-card px-3 text-[10px] text-muted-foreground uppercase tracking-widest">ou</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowNova(true)}
-                className="w-full h-12 flex items-center justify-center border border-border text-foreground font-bold uppercase tracking-widest text-xs rounded-xl hover:bg-muted transition-all"
-              >
-                Criar Nova Fábrica
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider pl-1">
-                  Nome da Fábrica
-                </label>
-                <input
-                  type="text"
-                  value={nomeNova}
-                  onChange={(e) => setNomeNova(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCriarFabrica()}
-                  className="w-full h-12 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
-                  placeholder="Ex: Indústria Martins"
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground text-center px-2">
-                Um código de 6 caracteres será gerado. Anote-o — é a única forma de acessar sua fábrica.
-              </p>
-              <button
-                onClick={handleCriarFabrica}
-                disabled={isCriando || !nomeNova.trim()}
-                className="w-full h-12 flex items-center justify-center bg-primary text-primary-foreground font-bold uppercase tracking-widest text-xs rounded-xl shadow-md hover:opacity-90 transition-all disabled:opacity-50"
-              >
-                {isCriando ? "Criando..." : "Criar e Entrar"}
-              </button>
-              <button
-                onClick={() => { setShowNova(false); setNomeNova("") }}
-                className="w-full h-10 flex items-center justify-center text-muted-foreground text-xs font-bold uppercase tracking-widest hover:text-foreground transition-colors"
-              >
-                Voltar
-              </button>
-            </div>
-          )}
-        </div>
-        <p className="text-[10px] text-muted-foreground/40 mt-6">Exata © 2026</p>
-      </div>
-    )
-  }
-
-  // ----------------------------------------------------------------
   // APP PRINCIPAL
   // ----------------------------------------------------------------
 
-  // helpers de cópia
-  const copiarCodigo = (codigo: string, setter: (v: boolean) => void) => {
-    navigator.clipboard.writeText(codigo).then(() => {
-      setter(true)
-      setTimeout(() => setter(false), 2000)
-    })
-  }
   const NavButton = ({
     id, label, sublabel, icon: Icon, onClick, isActive, isCollapsed
   }: {
@@ -717,12 +477,12 @@ export default function ExataApp() {
             />
             <button
               onClick={handleSair}
-              className={`w-full flex items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-all
+              className={`w-full flex items-center rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all
                 ${collapsed ? "justify-center h-10 w-10 mx-auto" : "gap-3 px-3 py-3"}`}
-              title={collapsed ? "Trocar fábrica" : undefined}
+              title={collapsed ? "Sair" : undefined}
             >
-              <Key className="h-[18px] w-[18px] flex-shrink-0" />
-              {!collapsed && <span className="text-xs font-bold leading-tight">Trocar Fábrica</span>}
+              <LogOut className="h-[18px] w-[18px] flex-shrink-0" />
+              {!collapsed && <span className="text-xs font-bold leading-tight">Sair</span>}
             </button>
             {!collapsed && (
               <p className="text-[9px] text-muted-foreground/50 font-medium text-center pt-2 pb-1">
@@ -819,10 +579,10 @@ export default function ExataApp() {
             </button>
             <button
               onClick={handleSair}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all"
             >
-              <Key className="h-5 w-5 flex-shrink-0" />
-              <span className="text-sm font-bold">Trocar Fábrica</span>
+              <LogOut className="h-5 w-5 flex-shrink-0" />
+              <span className="text-sm font-bold">Sair</span>
             </button>
             <p className="text-[9px] text-muted-foreground/50 font-medium text-center pt-2">v4.0.0 Cloud</p>
           </div>
@@ -1175,44 +935,7 @@ export default function ExataApp() {
           </main>
         </div>
       </div>
-      {/* MODAL: CÓDIGO RECÉM-CRIADO */}
-      {codigoNovo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
-          <div className="w-full max-w-sm bg-card border border-border p-8 rounded-2xl shadow-2xl space-y-6">
-            <div className="text-center space-y-1">
-              <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-3">
-                <Key className="h-6 w-6 text-primary" />
-              </div>
-              <h2 className="text-xl font-black uppercase tracking-tight text-foreground">Fábrica criada!</h2>
-              <p className="text-xs text-muted-foreground">Este é o código de acesso da sua fábrica. Anote agora — ele não será exibido novamente desta forma.</p>
-            </div>
-
-            <div className="space-y-3">
-              <div className="bg-muted rounded-xl p-4 flex items-center justify-between gap-3">
-                <span className="text-2xl font-black tracking-[0.3em] text-foreground">{codigoNovo}</span>
-                <button
-                  onClick={() => copiarCodigo(codigoNovo, setCopiado)}
-                  className="h-9 w-9 flex items-center justify-center rounded-lg bg-card border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-all flex-shrink-0"
-                  title="Copiar código"
-                >
-                  {copiado ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-                </button>
-              </div>
-              <p className="text-[10px] text-muted-foreground text-center">
-                Compartilhe só com quem deve acessar esta fábrica.
-              </p>
-            </div>
-
-            <button
-              onClick={() => setCodigoNovo(null)}
-              className="w-full h-11 flex items-center justify-center bg-primary text-primary-foreground font-bold uppercase tracking-widest text-[11px] rounded-xl shadow-md hover:opacity-90 transition-all"
-            >
-              Já anotei, entrar no sistema
-            </button>
-          </div>
-        </div>
-      )}
-
     </React.Fragment>
   )
 }
+
