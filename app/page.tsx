@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
-  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench,
+  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
   Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut
 } from "lucide-react"
 
@@ -43,6 +43,11 @@ export default function ExataApp() {
   const { session, loading: authLoading, signOut } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
+
+  // código de acesso (card de configurações)
+  const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
+  const [showCodigo,   setShowCodigo]   = useState(false)
+  const [copiadoConf,  setCopiadoConf]  = useState(false)
 
   // configurações
   const [defaultTime,     setDefaultTime]     = useState("")
@@ -110,7 +115,22 @@ export default function ExataApp() {
     carregarAlertas(empresaAtivaId)
     carregarConfFabrica(empresaAtivaId)
     carregarTurnos(empresaAtivaId)
+    // busca o código de acesso para exibir nas configurações
+    supabase
+      .from("codigos_acesso")
+      .select("codigo")
+      .eq("empresa_id", empresaAtivaId)
+      .single()
+      .then(({ data }) => { if (data) setCodigoAtual(data.codigo) })
   }, [empresaAtivaId])
+
+  // helper de cópia
+  const copiarCodigo = (codigo: string, setter: (v: boolean) => void) => {
+    navigator.clipboard.writeText(codigo).then(() => {
+      setter(true)
+      setTimeout(() => setter(false), 2000)
+    })
+  }
 
   // --- Alertas automáticos ---
   const carregarAlertas = async (empId: string) => {
