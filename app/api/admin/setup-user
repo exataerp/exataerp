@@ -1,0 +1,113 @@
+import { createClient } from '@supabase/supabase-js'
+import { NextResponse } from 'next/server'
+
+export const dynamic = 'force-dynamic'
+
+export async function POST(request: Request) {
+  try {
+    const { email, password, nome, empresaNome } = await request.json()
+
+    if (!email || !password) {
+      return NextResponse.json({ error: 'E-mail e senha são obrigatórios.' }, { status: 400 })
+    }
+
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+
+    const cleanEmail = email.trim().toLowerCase()
+    const EMPRESA_ID = '00000000-0000-0000-0000-000000000001'
+
+    // Proteção: só permite rodar se não existir nenhum master ainda
+    const { data: masterExistente } = await supabaseAdmin
+      .from('controle_acesso')
+      .select('id')
+      .eq('nivel', 'master')
+      .eq('status', 'ativo')
+      .maybeSingle()
+
+    if (masterExistente) {
+      return NextResponse.json({
+        error: 'Já existe um usuário master ativo. Esta rota não pode ser reutilizada por segurança.',
+      }, { status: 403 })
+    }
+
+    // 1. Garante que a empresa existe
+    await supabaseAdmin.from('empresas').upsert({
+      id: EMPRESA_ID,
+      nome: empresaNome || 'Exata Indústria',
+      status: 'ativo',
+      onboarding_completed: true,
+      plano: 'pro',
+    }, { onConflict: 'id' })
+
+    // 2. Remove usuário auth anterior com esse e-mail (se existir de tentativas antigas)
+    const { data: existingList } = await supabaseAdmin.auth.admin.listUsers()
+    const existing = existingList?.users?.find((u: any) => u.email === cleanEmail)
+    if (existing) {
+      await supabaseAdmin.from('perfis').delete().eq('id', existing.id)
+      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', existing.id)
+      await supabaseAdmin.auth.admin.deleteUser(existing.id)
+    }
+
+    // 3. Cria o usuário com a senha corretamente hasheada pelo Supabase Auth
+    const { data: newUser, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email: cleanEmail,
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        name: nome || 'Administrador',
+        first_access_completed: true,
+      },
+    })
+
+    if (createErr || !newUser?.user) {
+      return NextResponse.json({
+        error: `Erro ao criar usuário no Supabase Auth: ${createErr?.message}`,
+      }, { status: 500 })
+    }
+
+    const userId = newUser.user.id
+
+    // 4. Cria o perfil
+    const { error: perfilErr } = await supabaseAdmin.from('perfis').upsert({
+      id: userId,
+      empresa_id: EMPRESA_ID,
+      email: cleanEmail,
+      nome: nome || 'Administrador',
+      tipo_usuario: 'admin',
+      status: 'ativo',
+      first_access_completed: true,
+    }, { onConflict: 'id' })
+
+    if (perfilErr) {
+      return NextResponse.json({
+        error: `Usuário Auth criado (${userId}), mas erro no perfil: ${perfilErr.message}`,
+      }, { status: 500 })
+    }
+
+    // 5. Cria o controle de acesso master
+    const { error: controleErr } = await supabaseAdmin.from('controle_acesso').insert({
+      user_id: userId,
+      empresa_id: EMPRESA_ID,
+      nivel: 'master',
+      status: 'ativo',
+    })
+
+    if (controleErr) {
+      return NextResponse.json({
+        error: `Perfil criado, mas erro no controle_acesso: ${controleErr.message}`,
+      }, { status: 500 })
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `✅ Usuário "${cleanEmail}" criado com sucesso como Master! Agora pode fazer login.`,
+    })
+
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 })
+  }
+}
