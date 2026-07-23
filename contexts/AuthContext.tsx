@@ -1,9 +1,16 @@
 'use client'
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+} from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
+// ─── Tipos existentes (mantidos) ──────────────────────────────────────────────
 export interface EmpresaInfo {
   id: string
   nome: string
@@ -29,112 +36,177 @@ export interface SessionData {
   preferencias: { theme: string; language: string }
 }
 
-interface AuthContextType {
-  supabaseUser: User | null
-  session: SessionData | null
-  loading: boolean
-  signOut: () => Promise<void>
-  reloadSession: () => Promise<void>
+// ─── Hierarquia de roles ───────────────────────────────────────────────────────
+export type TipoUsuario = 'admin' | 'gerente' | 'colaborador' | 'visualizador'
+
+const HIERARQUIA: Record<string, number> = {
+  admin:        4,
+  gerente:      3,
+  colaborador:  2,
+  visualizador: 1,
 }
 
+// ─── Tipo do contexto ──────────────────────────────────────────────────────────
+interface AuthContextType {
+  supabaseUser:  User | null
+  session:       SessionData | null
+  loading:       boolean
+  signIn:        (email: string, senha: string) => Promise<{ error: string | null }>
+  signOut:       () => Promise<void>
+  reloadSession: () => Promise<void>
+  // Helpers de permissão
+  podeAcessar:   (nivelMinimo: TipoUsuario) => boolean
+  isAdmin:       boolean
+  isGerente:     boolean
+}
+
+// ─── Context ───────────────────────────────────────────────────────────────────
 const AuthContext = createContext<AuthContextType>({
-  supabaseUser: null,
-  session: null,
-  loading: true,
-  signOut: async () => {},
+  supabaseUser:  null,
+  session:       null,
+  loading:       true,
+  signIn:        async () => ({ error: null }),
+  signOut:       async () => {},
   reloadSession: async () => {},
+  podeAcessar:   () => false,
+  isAdmin:       false,
+  isGerente:     false,
 })
 
+// ─── Provider ─────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [supabaseUser, setSupabaseUser] = useState<User | null>(null)
-  const [session, setSession] = useState<SessionData | null>(null)
-  const [loading, setLoading] = useState(true)
   const supabase = createClient()
+  const [supabaseUser, setSupabaseUser] = useState<User | null>(null)
+  const [session, setSession]           = useState<SessionData | null>(null)
+  const [loading, setLoading]           = useState(true)
 
-  const loadEnrichedSession = useCallback(async (accessToken: string) => {
+  // Carrega dados completos do usuário + empresa + perfil
+  const loadSession = useCallback(async (user: User) => {
     try {
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      })
-      if (!res.ok) {
+      // Busca o perfil na tabela perfis (usando user_id agora vinculado)
+      const { data: perfil } = await supabase
+        .from('perfis')
+        .select('id, nome, cargo, tipo_usuario, status, email, empresa_id, first_access_completed')
+        .eq('user_id', user.id)
+        .eq('status', 'ativo')
+        .single()
+
+      if (!perfil) {
         setSession(null)
+        setSupabaseUser(user)
+        setLoading(false)
         return
       }
-      const data: SessionData = await res.json()
-      setSession(data)
 
-      // Aplica tema salvo nas preferências
-      if (typeof window !== 'undefined' && data.preferencias?.theme) {
-        const html = document.documentElement
-        html.classList.remove('light', 'dark')
-        if (data.preferencias.theme !== 'system') {
-          html.classList.add(data.preferencias.theme)
-        }
+      // Busca dados da empresa
+      const { data: empresa } = await supabase
+        .from('empresas')
+        .select('id, nome, status, onboarding_completed, plano')
+        .eq('id', perfil.empresa_id)
+        .single()
+
+      const sessionData: SessionData = {
+        user: {
+          id:                    perfil.id,
+          email:                 perfil.email ?? user.email ?? '',
+          nome:                  perfil.nome ?? '',
+          cargo:                 perfil.cargo ?? null,
+          tipo_usuario:          perfil.tipo_usuario ?? 'colaborador',
+          status:                perfil.status,
+          first_access_completed: perfil.first_access_completed ?? false,
+        },
+        empresa: empresa ?? {
+          id:                   perfil.empresa_id,
+          nome:                 '',
+          status:               'ativo',
+          onboarding_completed: false,
+          plano:                'free',
+        },
+        nivel:               perfil.tipo_usuario ?? 'colaborador',
+        permissoes_operador: {},
+        permissoes:          [],
+        preferencias:        { theme: 'dark', language: 'pt-BR' },
       }
+
+      setSession(sessionData)
+      setSupabaseUser(user)
     } catch {
       setSession(null)
-    }
-  }, [])
-
-  const reloadSession = useCallback(async () => {
-    const { data: { session: sbSession } } = await supabase.auth.getSession()
-    if (sbSession?.access_token) {
-      await loadEnrichedSession(sbSession.access_token)
-    }
-  }, [supabase, loadEnrichedSession])
-
-  useEffect(() => {
-    let mounted = true
-
-    const init = async () => {
-      const { data: { session: sbSession } } = await supabase.auth.getSession()
-      if (!mounted) return
-
-      if (sbSession?.user) {
-        setSupabaseUser(sbSession.user)
-        await loadEnrichedSession(sbSession.access_token)
-      }
+      setSupabaseUser(user)
+    } finally {
       setLoading(false)
     }
+  }, [supabase])
 
-    init()
+  // Escuta mudanças de autenticação
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s?.user) loadSession(s.user)
+      else         setLoading(false)
+    })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, sbSession) => {
-        if (!mounted) return
-        if (sbSession?.user) {
-          setSupabaseUser(sbSession.user)
-          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            await loadEnrichedSession(sbSession.access_token)
-          }
-        } else {
+      (_event, s) => {
+        if (s?.user) loadSession(s.user)
+        else {
           setSupabaseUser(null)
           setSession(null)
+          setLoading(false)
         }
-        setLoading(false)
       }
     )
 
-    return () => {
-      mounted = false
-      subscription.unsubscribe()
-    }
-  }, [supabase, loadEnrichedSession])
+    return () => subscription.unsubscribe()
+  }, [supabase, loadSession])
 
-  const signOut = useCallback(async () => {
+  // ─── Actions ───────────────────────────────────────────────────────────────
+  const signIn = async (email: string, senha: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password: senha,
+    })
+    return { error: error?.message ?? null }
+  }
+
+  const signOut = async () => {
     await supabase.auth.signOut()
-    setSupabaseUser(null)
     setSession(null)
-    window.location.href = '/login'
-  }, [supabase])
+    setSupabaseUser(null)
+  }
+
+  const reloadSession = async () => {
+    if (supabaseUser) await loadSession(supabaseUser)
+  }
+
+  // ─── Helpers de permissão ──────────────────────────────────────────────────
+  const tipoAtual = session?.user?.tipo_usuario ?? ''
+
+  const podeAcessar = (nivelMinimo: TipoUsuario): boolean => {
+    if (!tipoAtual) return false
+    return (HIERARQUIA[tipoAtual] ?? 0) >= (HIERARQUIA[nivelMinimo] ?? 99)
+  }
 
   return (
-    <AuthContext.Provider value={{ supabaseUser, session, loading, signOut, reloadSession }}>
+    <AuthContext.Provider value={{
+      supabaseUser,
+      session,
+      loading,
+      signIn,
+      signOut,
+      reloadSession,
+      podeAcessar,
+      isAdmin:   tipoAtual === 'admin',
+      isGerente: tipoAtual === 'admin' || tipoAtual === 'gerente',
+    }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
+// ─── Hook ──────────────────────────────────────────────────────────────────────
 export function useAuth() {
-  return useContext(AuthContext)
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth deve ser usado dentro de <AuthProvider>')
+  return ctx
 }
+
