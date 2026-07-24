@@ -9,8 +9,18 @@ import React, {
 } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
+import {
+  type RoleName,
+  type AbaId,
+  podeAcessarAba,
+  abasVisiveis,
+  hasRole,
+  isSystemManager,
+} from '@/lib/permissions'
 
-// ─── Tipos existentes (mantidos) ──────────────────────────────────────────────
+// ------------------------------------------------------------
+// Tipos
+// ------------------------------------------------------------
 export interface EmpresaInfo {
   id: string
   nome: string
@@ -25,70 +35,66 @@ export interface SessionData {
     email: string
     nome: string
     cargo: string | null
-    tipo_usuario: string
     status: string
     first_access_completed: boolean
   }
   empresa: EmpresaInfo
-  nivel: string
-  permissoes_operador: Record<string, boolean>
-  permissoes: string[]
+  roles: RoleName[]
   preferencias: { theme: string; language: string }
 }
 
-// ─── Hierarquia de roles ───────────────────────────────────────────────────────
-export type TipoUsuario = 'admin' | 'gerente' | 'colaborador' | 'visualizador'
-
-const HIERARQUIA: Record<string, number> = {
-  admin:        4,
-  gerente:      3,
-  colaborador:  2,
-  visualizador: 1,
-}
-
-// ─── Tipo do contexto ──────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Tipo do contexto
+// ------------------------------------------------------------
 interface AuthContextType {
   supabaseUser:  User | null
   session:       SessionData | null
   loading:       boolean
+
+  // Auth actions
   signIn:        (email: string, senha: string) => Promise<{ error: string | null }>
   signOut:       () => Promise<void>
   reloadSession: () => Promise<void>
-  // Helpers de permissão
-  podeAcessar:   (nivelMinimo: TipoUsuario) => boolean
-  isAdmin:       boolean
-  isGerente:     boolean
+
+  // Helpers de roles
+  hasRole:          (role: RoleName) => boolean
+  canAccess:        (aba: AbaId) => boolean
+  visibleTabs:      AbaId[]
+  isSystemManager:  boolean
 }
 
-// ─── Context ───────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Context
+// ------------------------------------------------------------
 const AuthContext = createContext<AuthContextType>({
-  supabaseUser:  null,
-  session:       null,
-  loading:       true,
-  signIn:        async () => ({ error: null }),
-  signOut:       async () => {},
-  reloadSession: async () => {},
-  podeAcessar:   () => false,
-  isAdmin:       false,
-  isGerente:     false,
+  supabaseUser:   null,
+  session:        null,
+  loading:        true,
+  signIn:         async () => ({ error: null }),
+  signOut:        async () => {},
+  reloadSession:  async () => {},
+  hasRole:        () => false,
+  canAccess:      () => false,
+  visibleTabs:    [],
+  isSystemManager: false,
 })
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Provider
+// ------------------------------------------------------------
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
   const [supabaseUser, setSupabaseUser] = useState<User | null>(null)
   const [session, setSession]           = useState<SessionData | null>(null)
   const [loading, setLoading]           = useState(true)
 
-  // Carrega dados completos do usuário + empresa + perfil
   const loadSession = useCallback(async (user: User) => {
     try {
-      // Busca o perfil na tabela perfis (usando user_id agora vinculado)
+      // Busca perfil
       const { data: perfil } = await supabase
         .from('perfis')
-        .select('id, nome, cargo, tipo_usuario, status, email, empresa_id, first_access_completed')
+        .select('id, nome, cargo, status, email, empresa_id, first_access_completed')
         .eq('user_id', user.id)
-        .eq('status', 'ativo')
         .single()
 
       if (!perfil) {
@@ -98,21 +104,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      // Busca dados da empresa
+      // Busca empresa
       const { data: empresa } = await supabase
         .from('empresas')
         .select('id, nome, status, onboarding_completed, plano')
         .eq('id', perfil.empresa_id)
         .single()
 
+      // Busca roles via view (RLS garante que só vê os próprios)
+      const { data: rolesData } = await supabase
+        .from('v_user_roles')
+        .select('role_name')
+        .eq('user_id', user.id)
+        .eq('empresa_id', perfil.empresa_id)
+
+      const roles = (rolesData ?? []).map((r: any) => r.role_name as RoleName)
+
+      // Busca preferências
+      const { data: prefs } = await supabase
+        .from('user_preferences')
+        .select('theme, language')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
       const sessionData: SessionData = {
         user: {
-          id:                    perfil.id,
-          email:                 perfil.email ?? user.email ?? '',
-          nome:                  perfil.nome ?? '',
-          cargo:                 perfil.cargo ?? null,
-          tipo_usuario:          perfil.tipo_usuario ?? 'colaborador',
-          status:                perfil.status,
+          id:                     perfil.id,
+          email:                  perfil.email ?? user.email ?? '',
+          nome:                   perfil.nome ?? '',
+          cargo:                  perfil.cargo ?? null,
+          status:                 perfil.status,
           first_access_completed: perfil.first_access_completed ?? false,
         },
         empresa: empresa ?? {
@@ -122,10 +143,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           onboarding_completed: false,
           plano:                'free',
         },
-        nivel:               perfil.tipo_usuario ?? 'colaborador',
-        permissoes_operador: {},
-        permissoes:          [],
-        preferencias:        { theme: 'dark', language: 'pt-BR' },
+        roles,
+        preferencias: {
+          theme:    prefs?.theme    ?? 'dark',
+          language: prefs?.language ?? 'pt-BR',
+        },
       }
 
       setSession(sessionData)
@@ -138,7 +160,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [supabase])
 
-  // Escuta mudanças de autenticação
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (s?.user) loadSession(s.user)
@@ -159,7 +180,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe()
   }, [supabase, loadSession])
 
-  // ─── Actions ───────────────────────────────────────────────────────────────
+  // ------------------------------------------------------------
+  // Actions
+  // ------------------------------------------------------------
   const signIn = async (email: string, senha: string) => {
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -178,13 +201,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (supabaseUser) await loadSession(supabaseUser)
   }
 
-  // ─── Helpers de permissão ──────────────────────────────────────────────────
-  const tipoAtual = session?.user?.tipo_usuario ?? ''
+  // ------------------------------------------------------------
+  // Derivações de roles
+  // ------------------------------------------------------------
+  const userRoles = session?.roles ?? []
 
-  const podeAcessar = (nivelMinimo: TipoUsuario): boolean => {
-    if (!tipoAtual) return false
-    return (HIERARQUIA[tipoAtual] ?? 0) >= (HIERARQUIA[nivelMinimo] ?? 99)
-  }
+  const tabs = abasVisiveis(userRoles)
 
   return (
     <AuthContext.Provider value={{
@@ -194,19 +216,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn,
       signOut,
       reloadSession,
-      podeAcessar,
-      isAdmin:   tipoAtual === 'admin',
-      isGerente: tipoAtual === 'admin' || tipoAtual === 'gerente',
+      hasRole:         (role: RoleName)  => hasRole(userRoles, role),
+      canAccess:       (aba: AbaId)      => podeAcessarAba(userRoles, aba),
+      visibleTabs:     tabs,
+      isSystemManager: isSystemManager(userRoles),
     }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-// ─── Hook ──────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------
+// Hook
+// ------------------------------------------------------------
 export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth deve ser usado dentro de <AuthProvider>')
   return ctx
 }
 
+// Re-exporta tipos úteis para não precisar importar de dois lugares
+export type { RoleName, AbaId }
