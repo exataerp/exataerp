@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { useTheme } from "next-themes"
 import { supabase } from "@/components/supabase"
 import { useAuth } from "@/contexts/AuthContext"
+import { usePermissao } from "@/hooks/usePermissao"
 import { useToast } from "@/hooks/use-toast"
 import { GBOTab } from "@/components/gbo-tab"
 import { PCPTab } from "@/components/pcp-tab"
@@ -15,78 +16,75 @@ import { DashboardTab } from "@/components/dashboard-tab"
 import { MaquinasTab } from "@/components/maquinas-tab"
 import { ManutencaoTab } from "@/components/manutencao-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
+import { EquipeTab } from "@/components/equipe-tab"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
-  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut
+  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench,
+  Check, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
 } from "lucide-react"
 
-type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes"
+type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes" | "equipe"
 
 const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.ElementType }[] = [
-  { id: "dashboard",  label: "Dashboard",       sublabel: "Visão em tempo real",     icon: LayoutDashboard },
-  { id: "gbo",        label: "Produto/Roteiro", sublabel: "Gerenciamento Diário",    icon: BarChart2       },
-  { id: "pcp",        label: "PCP",             sublabel: "Programação de Produção", icon: CalendarClock   },
-  { id: "maquinas",   label: "Máquinas",         sublabel: "Postos de Trabalho",     icon: Factory         },
-  { id: "manutencao", label: "Manutenção",        sublabel: "Gestão de Ativos",       icon: Wrench          },
-  { id: "apontamento",label: "Apontamento",       sublabel: "Registro de Produção",   icon: ClipboardCheck  },
-  { id: "estoque",    label: "Estoque",           sublabel: "Controle de Inventário", icon: Boxes           },
-  { id: "excecoes",   label: "Exceções",          sublabel: "Motivos de Parada",      icon: Tag             },
-  { id: "relatorios", label: "Relatórios",        sublabel: "Análise de Desempenho",  icon: LineChart       },
+  { id: "dashboard",   label: "Dashboard",       sublabel: "Visão em tempo real",      icon: LayoutDashboard },
+  { id: "gbo",         label: "Produto/Roteiro", sublabel: "Gerenciamento Diário",     icon: BarChart2       },
+  { id: "pcp",         label: "PCP",             sublabel: "Programação de Produção",  icon: CalendarClock   },
+  { id: "maquinas",    label: "Máquinas",         sublabel: "Postos de Trabalho",      icon: Factory         },
+  { id: "manutencao",  label: "Manutenção",       sublabel: "Gestão de Ativos",        icon: Wrench          },
+  { id: "apontamento", label: "Apontamento",      sublabel: "Registro de Produção",    icon: ClipboardCheck  },
+  { id: "estoque",     label: "Estoque",          sublabel: "Controle de Inventário",  icon: Boxes           },
+  { id: "excecoes",    label: "Exceções",         sublabel: "Motivos de Parada",       icon: LayoutDashboard },
+  { id: "relatorios",  label: "Relatórios",       sublabel: "Análise de Desempenho",   icon: LineChart       },
 ]
 
 const STORAGE_TAB = "exata_aba_ativa"
 
 export default function ExataApp() {
   const { session, loading: authLoading, signOut } = useAuth()
+  const { isSystemManager, canAccess } = usePermissao()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
 
-  // código de acesso (card de configurações)
-  const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
-  const [showCodigo,   setShowCodigo]   = useState(false)
-  const [copiadoConf,  setCopiadoConf]  = useState(false)
-
   // configurações
-  const [defaultTime,     setDefaultTime]     = useState("")
-  const [defaultTimeUnit, setDefaultTimeUnit] = useState<"hours" | "minutes" | "seconds">("hours")
-  const [isSavingConf,    setIsSavingConf]    = useState(false)
+  const [defaultTime,      setDefaultTime]      = useState("")
+  const [defaultTimeUnit,  setDefaultTimeUnit]  = useState<"hours" | "minutes" | "seconds">("hours")
+  const [isSavingConf,     setIsSavingConf]     = useState(false)
 
   // dados da fábrica
-  const [confNome,        setConfNome]        = useState("")
-  const [confCnpj,        setConfCnpj]        = useState("")
-  const [confEndereco,    setConfEndereco]    = useState("")
-  const [confSegmento,    setConfSegmento]    = useState("")
-  const [confFuncionarios,setConfFuncionarios]= useState("")
-  const [isSavingFabrica, setIsSavingFabrica] = useState(false)
+  const [confNome,         setConfNome]         = useState("")
+  const [confCnpj,         setConfCnpj]         = useState("")
+  const [confEndereco,     setConfEndereco]     = useState("")
+  const [confSegmento,     setConfSegmento]     = useState("")
+  const [confFuncionarios, setConfFuncionarios] = useState("")
+  const [isSavingFabrica,  setIsSavingFabrica]  = useState(false)
 
   // metas
-  const [metaOEE,         setMetaOEE]         = useState("85")
-  const [metaRefugo,      setMetaRefugo]       = useState("2")
-  const [metaProdutividade,setMetaProdutividade]= useState("90")
-  const [isSavingMetas,   setIsSavingMetas]   = useState(false)
+  const [metaOEE,           setMetaOEE]           = useState("85")
+  const [metaRefugo,        setMetaRefugo]         = useState("2")
+  const [metaProdutividade, setMetaProdutividade]  = useState("90")
+  const [isSavingMetas,     setIsSavingMetas]      = useState(false)
 
   // turnos
-  const [turnos,          setTurnos]          = useState<{ id?: string; nome: string; hora_inicio: string; hora_fim: string; dias_semana: string[]; ativo: boolean }[]>([])
-  const [loadingTurnos,   setLoadingTurnos]   = useState(false)
-  const [salvandoTurno,   setSalvandoTurno]   = useState(false)
-  const [novoTurno,       setNovoTurno]       = useState({ nome: "", hora_inicio: "", hora_fim: "", dias_semana: ["1","2","3","4","5"] })
+  const [turnos,        setTurnos]        = useState<{ id?: string; nome: string; hora_inicio: string; hora_fim: string; dias_semana: string[]; ativo: boolean }[]>([])
+  const [loadingTurnos, setLoadingTurnos] = useState(false)
+  const [salvandoTurno, setSalvandoTurno] = useState(false)
+  const [novoTurno,     setNovoTurno]     = useState({ nome: "", hora_inicio: "", hora_fim: "", dias_semana: ["1","2","3","4","5"] })
 
-  const [activeTab,    setActiveTab]    = useState<TabId>("dashboard")
-  const [relatorioAtivo, setRelatorioAtivo] = useState<RelatoId>("oee")
+  const [activeTab,       setActiveTab]       = useState<TabId>("dashboard")
+  const [relatorioAtivo,  setRelatorioAtivo]  = useState<RelatoId>("oee")
   const [estoqueAbaAtiva, setEstoqueAbaAtiva] = useState<EstoqueAba>("saldo")
-  const [collapsed,    setCollapsed]    = useState(false)
-  const [mobileOpen,   setMobileOpen]   = useState(false)
-  const [mounted,      setMounted]      = useState(false)
-  const [showAlertas,  setShowAlertas]  = useState(false)
-  const [alertas,      setAlertas]      = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
+  const [collapsed,       setCollapsed]       = useState(false)
+  const [mobileOpen,      setMobileOpen]      = useState(false)
+  const [mounted,         setMounted]         = useState(false)
+  const [showAlertas,     setShowAlertas]     = useState(false)
+  const [alertas,         setAlertas]         = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
   const { theme, setTheme } = useTheme()
   const { toast } = useToast()
   const faixaTelaRef = useRef<"celular" | "notebook" | "monitor" | null>(null)
 
-  // --- Sidebar se adapta ao tamanho da tela ---
+  // Sidebar adapta ao tamanho da tela
   useEffect(() => {
     const ajustar = () => {
       const largura = window.innerWidth
@@ -94,19 +92,21 @@ export default function ExataApp() {
       if (faixaTelaRef.current === faixa) return
       faixaTelaRef.current = faixa
       if (faixa === "notebook") setCollapsed(true)
-      if (faixa === "monitor") setCollapsed(false)
-      if (faixa !== "celular") setMobileOpen(false)
+      if (faixa === "monitor")  setCollapsed(false)
+      if (faixa !== "celular")  setMobileOpen(false)
     }
     ajustar()
     window.addEventListener("resize", ajustar)
     return () => window.removeEventListener("resize", ajustar)
   }, [])
 
-  // --- Inicialização ---
+  // Inicialização
   useEffect(() => {
     setMounted(true)
     const savedTab = localStorage.getItem(STORAGE_TAB) as TabId
-    if (savedTab && NAV_ITEMS.find(n => n.id === savedTab)) setActiveTab(savedTab)
+    if (savedTab && [...NAV_ITEMS.map(n => n.id), "configuracoes", "equipe"].includes(savedTab)) {
+      setActiveTab(savedTab)
+    }
   }, [])
 
   // Carrega dados quando empresa estiver disponível
@@ -115,28 +115,12 @@ export default function ExataApp() {
     carregarAlertas(empresaAtivaId)
     carregarConfFabrica(empresaAtivaId)
     carregarTurnos(empresaAtivaId)
-    // busca o código de acesso para exibir nas configurações
-    supabase
-      .from("codigos_acesso")
-      .select("codigo")
-      .eq("empresa_id", empresaAtivaId)
-      .single()
-      .then(({ data }) => { if (data) setCodigoAtual(data.codigo) })
   }, [empresaAtivaId])
 
-  // helper de cópia
-  const copiarCodigo = (codigo: string, setter: (v: boolean) => void) => {
-    navigator.clipboard.writeText(codigo).then(() => {
-      setter(true)
-      setTimeout(() => setter(false), 2000)
-    })
-  }
-
-  // --- Alertas automáticos ---
+  // Alertas automáticos
   const carregarAlertas = async (empId: string) => {
     const novosAlertas: typeof alertas = []
 
-    // Estoque crítico
     const { data: saldos } = await supabase
       .from("saldo_estoque")
       .select("saldo_atual, insumos(codigo, estoque_minimo)")
@@ -152,7 +136,6 @@ export default function ExataApp() {
       }
     }
 
-    // OPs atrasadas
     const hoje = new Date().toISOString().split("T")[0]
     const { data: ops } = await supabase
       .from("ordens_producao")
@@ -165,7 +148,6 @@ export default function ExataApp() {
       novosAlertas.push({ id: `op-atrasada-${(op as any).numero_op}`, tipo: "critico", titulo: `OP atrasada: ${(op as any).numero_op}`, descricao: `Programada para ${(op as any).data_programacao.split("-").reverse().join("/")} e ainda em aberto.`, tab: "pcp" })
     }
 
-    // Manutenções pendentes
     const { data: mants } = await supabase
       .from("manutencao")
       .select("id")
@@ -179,20 +161,17 @@ export default function ExataApp() {
     setAlertas(novosAlertas)
   }
 
-  // --- Sair ---
-  const handleSair = () => signOut()
+  const handleSair = async () => {
+    await signOut()
+    window.location.href = "/login"
+  }
 
-
-  // --- Salvar configurações ---
   const handleSaveConf = async () => {
     if (!empresaAtivaId) return
     setIsSavingConf(true)
     const { error } = await supabase
       .from("empresas")
-      .update({
-        tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
-        unidade_tempo: defaultTimeUnit,
-      })
+      .update({ tempo_padrao: defaultTime ? parseFloat(defaultTime) : null, unidade_tempo: defaultTimeUnit })
       .eq("id", empresaAtivaId)
     if (error) {
       toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
@@ -227,15 +206,7 @@ export default function ExataApp() {
     setIsSavingFabrica(true)
     const { error } = await supabase
       .from("empresas")
-      .update({
-        nome: confNome,
-        cnpj: confCnpj,
-        endereco: confEndereco,
-        segmento: confSegmento,
-        num_funcionarios: confFuncionarios,
-        tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
-        unidade_tempo: defaultTimeUnit,
-      })
+      .update({ nome: confNome, cnpj: confCnpj, endereco: confEndereco, segmento: confSegmento, num_funcionarios: confFuncionarios, tempo_padrao: defaultTime ? parseFloat(defaultTime) : null, unidade_tempo: defaultTimeUnit })
       .eq("id", empresaAtivaId)
     if (error) {
       toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
@@ -250,11 +221,7 @@ export default function ExataApp() {
     setIsSavingMetas(true)
     const { error } = await supabase
       .from("empresas")
-      .update({
-        meta_oee: parseFloat(metaOEE) || 85,
-        meta_refugo: parseFloat(metaRefugo) || 2,
-        meta_produtividade: parseFloat(metaProdutividade) || 90,
-      })
+      .update({ meta_oee: parseFloat(metaOEE) || 85, meta_refugo: parseFloat(metaRefugo) || 2, meta_produtividade: parseFloat(metaProdutividade) || 90 })
       .eq("id", empresaAtivaId)
     if (error) {
       toast({ title: "Erro ao salvar metas", description: error.message, variant: "destructive" })
@@ -266,11 +233,7 @@ export default function ExataApp() {
 
   const carregarTurnos = async (empId: string) => {
     setLoadingTurnos(true)
-    const { data } = await supabase
-      .from("turnos")
-      .select("*")
-      .eq("empresa_id", empId)
-      .order("hora_inicio")
+    const { data } = await supabase.from("turnos").select("*").eq("empresa_id", empId).order("hora_inicio")
     if (data) setTurnos(data)
     setLoadingTurnos(false)
   }
@@ -280,16 +243,8 @@ export default function ExataApp() {
     setSalvandoTurno(true)
     const { data, error } = await supabase
       .from("turnos")
-      .insert({
-        empresa_id: empresaAtivaId,
-        nome: novoTurno.nome,
-        hora_inicio: novoTurno.hora_inicio,
-        hora_fim: novoTurno.hora_fim,
-        dias_semana: novoTurno.dias_semana,
-        ativo: true,
-      })
-      .select()
-      .single()
+      .insert({ empresa_id: empresaAtivaId, nome: novoTurno.nome, hora_inicio: novoTurno.hora_inicio, hora_fim: novoTurno.hora_fim, dias_semana: novoTurno.dias_semana, ativo: true })
+      .select().single()
     if (error) {
       toast({ title: "Erro ao criar turno", description: error.message, variant: "destructive" })
     } else {
@@ -315,9 +270,7 @@ export default function ExataApp() {
     }))
   }
 
-  // ----------------------------------------------------------------
-  // TELA DE CARREGAMENTO (enquanto AuthContext valida a sessão)
-  // ----------------------------------------------------------------
+  // Tela de carregamento
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -326,9 +279,11 @@ export default function ExataApp() {
     )
   }
 
-  // ----------------------------------------------------------------
-  // APP PRINCIPAL
-  // ----------------------------------------------------------------
+  // Sem sessão — redireciona para login
+  if (!empresaAtivaId) {
+    if (typeof window !== "undefined") window.location.href = "/login"
+    return null
+  }
 
   const NavButton = ({
     id, label, sublabel, icon: Icon, onClick, isActive, isCollapsed
@@ -360,6 +315,9 @@ export default function ExataApp() {
     localStorage.setItem(STORAGE_TAB, tab)
     setMobileOpen(false)
   }
+
+  // Filtra NAV_ITEMS pelo canAccess de cada aba
+  const navVisiveis = NAV_ITEMS.filter(item => canAccess(item.id as any))
 
   return (
     <React.Fragment>
@@ -444,7 +402,7 @@ export default function ExataApp() {
           )}
 
           <nav className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-2 py-3 space-y-1">
-            {NAV_ITEMS.map((item) => (
+            {navVisiveis.map((item) => (
               <React.Fragment key={item.id}>
                 <NavButton
                   {...item}
@@ -485,15 +443,28 @@ export default function ExataApp() {
           </nav>
 
           <div className="px-2 py-3 border-t border-border space-y-1">
-            <NavButton
-              id="configuracoes"
-              label="Configurações"
-              sublabel="Preferências do sistema"
-              icon={Settings}
-              isActive={activeTab === "configuracoes"}
-              isCollapsed={collapsed}
-              onClick={() => goTab("configuracoes")}
-            />
+            {isSystemManager && (
+              <>
+                <NavButton
+                  id="equipe"
+                  label="Equipe"
+                  sublabel="Gestão de usuários"
+                  icon={Users}
+                  isActive={activeTab === "equipe"}
+                  isCollapsed={collapsed}
+                  onClick={() => goTab("equipe")}
+                />
+                <NavButton
+                  id="configuracoes"
+                  label="Configurações"
+                  sublabel="Preferências do sistema"
+                  icon={Settings}
+                  isActive={activeTab === "configuracoes"}
+                  isCollapsed={collapsed}
+                  onClick={() => goTab("configuracoes")}
+                />
+              </>
+            )}
             <button
               onClick={handleSair}
               className={`w-full flex items-center rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all
@@ -531,7 +502,7 @@ export default function ExataApp() {
           </div>
 
           <nav className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {navVisiveis.map((item) => {
               const Icon = item.icon
               const isActive = activeTab === item.id
               return (
@@ -583,19 +554,36 @@ export default function ExataApp() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border space-y-1">
-            <button
-              onClick={() => goTab("configuracoes")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
-                ${activeTab === "configuracoes" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-            >
-              <Settings className="h-5 w-5 flex-shrink-0" />
-              <div className="flex flex-col min-w-0">
-                <span className="text-sm font-bold leading-tight">Configurações</span>
-                <span className={`text-[10px] leading-tight truncate ${activeTab === "configuracoes" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-                  Preferências do sistema
-                </span>
-              </div>
-            </button>
+            {isSystemManager && (
+              <>
+                <button
+                  onClick={() => goTab("equipe")}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
+                    ${activeTab === "equipe" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                >
+                  <Users className="h-5 w-5 flex-shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-sm font-bold leading-tight">Equipe</span>
+                    <span className={`text-[10px] leading-tight truncate ${activeTab === "equipe" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                      Gestão de usuários
+                    </span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => goTab("configuracoes")}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
+                    ${activeTab === "configuracoes" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                >
+                  <Settings className="h-5 w-5 flex-shrink-0" />
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-sm font-bold leading-tight">Configurações</span>
+                    <span className={`text-[10px] leading-tight truncate ${activeTab === "configuracoes" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                      Preferências do sistema
+                    </span>
+                  </div>
+                </button>
+              </>
+            )}
             <button
               onClick={handleSair}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all"
@@ -617,68 +605,25 @@ export default function ExataApp() {
 
           <main className="flex-1 overflow-auto px-4 lg:px-8 py-6 print:p-12">
 
-            {empresaAtivaId && activeTab !== "configuracoes" && (
+            {empresaAtivaId && activeTab !== "configuracoes" && activeTab !== "equipe" && (
               <OnboardingChecklist
                 empresaAtivaId={empresaAtivaId}
                 onGoToTab={(tab) => goTab(tab as any)}
               />
             )}
 
-            {activeTab === "dashboard" && (
-              <div className="animate-in fade-in duration-300">
-                <DashboardTab empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
+            {activeTab === "dashboard" && <div className="animate-in fade-in duration-300"><DashboardTab empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "gbo"       && <div className="animate-in fade-in duration-300"><GBOTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "pcp"       && <div className="animate-in fade-in duration-300"><PCPTab empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "maquinas"  && <div className="animate-in fade-in duration-300"><MaquinasTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "manutencao"&& <div className="animate-in fade-in duration-300"><ManutencaoTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "apontamento"&&<div className="animate-in fade-in duration-300"><ApontamentoTab empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "estoque"   && <div className="animate-in fade-in duration-300"><EstoqueTab empresaAtivaId={empresaAtivaId} abaSelecionada={estoqueAbaAtiva} onChangeAba={setEstoqueAbaAtiva} /></div>}
+            {activeTab === "relatorios"&& <div className="animate-in fade-in duration-300"><RelatoriosTab empresaAtivaId={empresaAtivaId} relatorioSelecionado={relatorioAtivo} onChangeRelatorio={setRelatorioAtivo} /></div>}
+            {activeTab === "excecoes"  && <div className="animate-in fade-in duration-300"><ExcecoesTab empresaAtivaId={empresaAtivaId} /></div>}
+            {activeTab === "equipe"    && isSystemManager && <div className="animate-in fade-in duration-300"><EquipeTab /></div>}
 
-            {activeTab === "gbo" && (
-              <div className="animate-in fade-in duration-300">
-                <GBOTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-            {activeTab === "pcp" && (
-              <div className="animate-in fade-in duration-300">
-                <PCPTab empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-            {activeTab === "maquinas" && (
-              <div className="animate-in fade-in duration-300">
-                <MaquinasTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-            {activeTab === "manutencao" && (
-              <div className="animate-in fade-in duration-300">
-                <ManutencaoTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-            {activeTab === "apontamento" && (
-              <div className="animate-in fade-in duration-300">
-                <ApontamentoTab empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-            {activeTab === "estoque" && (
-              <div className="animate-in fade-in duration-300">
-                <EstoqueTab empresaAtivaId={empresaAtivaId} abaSelecionada={estoqueAbaAtiva} onChangeAba={setEstoqueAbaAtiva} />
-              </div>
-            )}
-
-            {activeTab === "relatorios" && (
-              <div className="animate-in fade-in duration-300">
-                <RelatoriosTab empresaAtivaId={empresaAtivaId} relatorioSelecionado={relatorioAtivo} onChangeRelatorio={setRelatorioAtivo} />
-              </div>
-            )}
-
-            {activeTab === "excecoes" && (
-              <div className="animate-in fade-in duration-300">
-                <ExcecoesTab empresaAtivaId={empresaAtivaId} />
-              </div>
-            )}
-
-{activeTab === "configuracoes" && (
+            {activeTab === "configuracoes" && isSystemManager && (
               <div className="space-y-6 pb-12 animate-in fade-in duration-300">
                 <div>
                   <h2 className="text-lg font-bold text-foreground">Configurações</h2>
@@ -687,7 +632,7 @@ export default function ExataApp() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-                  {/* ── DADOS DA FÁBRICA ── */}
+                  {/* DADOS DA FÁBRICA */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border">
                       <h3 className="text-sm font-bold text-foreground">Dados da Fábrica</h3>
@@ -720,7 +665,7 @@ export default function ExataApp() {
                           <input type="text" value={confEndereco} onChange={e => setConfEndereco(e.target.value)} placeholder="Rua, número, cidade"
                             className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
                         </div>
-                        <div className="space-y-1.5">
+                        <div className="space-y-1.5 col-span-2">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Tempo Operacional Padrão</label>
                           <div className="flex gap-2">
                             <input type="number" placeholder="Ex: 8" value={defaultTime} onChange={e => setDefaultTime(e.target.value)}
@@ -744,7 +689,7 @@ export default function ExataApp() {
                     </div>
                   </div>
 
-                  {/* ── METAS DE PRODUÇÃO ── */}
+                  {/* METAS DE PRODUÇÃO */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border">
                       <h3 className="text-sm font-bold text-foreground">Metas de Produção</h3>
@@ -770,14 +715,13 @@ export default function ExataApp() {
                     </div>
                   </div>
 
-                  {/* ── TURNOS ── */}
+                  {/* TURNOS */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden lg:col-span-2">
                     <div className="px-6 py-4 border-b border-border">
                       <h3 className="text-sm font-bold text-foreground">Turnos de Produção</h3>
                       <p className="text-[11px] text-muted-foreground mt-0.5">Defina os turnos para cálculos precisos de OEE e disponibilidade</p>
                     </div>
                     <div className="p-6 space-y-4">
-                      {/* Turnos existentes */}
                       {loadingTurnos ? (
                         <p className="text-xs text-muted-foreground animate-pulse">Carregando turnos...</p>
                       ) : turnos.length > 0 ? (
@@ -812,7 +756,6 @@ export default function ExataApp() {
                         <p className="text-xs text-muted-foreground">Nenhum turno cadastrado.</p>
                       )}
 
-                      {/* Novo turno */}
                       <div className="border border-dashed border-border rounded-xl p-4 space-y-3">
                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Adicionar turno</p>
                         <div className="grid grid-cols-3 gap-3">
@@ -850,40 +793,7 @@ export default function ExataApp() {
                     </div>
                   </div>
 
-                  {/* ── CÓDIGO DE ACESSO ── */}
-                  <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-                    <div className="px-6 py-4 border-b border-border flex items-center gap-2">
-                      <Key className="h-4 w-4 text-primary" />
-                      <div>
-                        <h3 className="text-sm font-bold text-foreground">Código de Acesso</h3>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Chave de entrada nesta fábrica</p>
-                      </div>
-                    </div>
-                    <div className="p-6 space-y-3">
-                      <div className="bg-muted rounded-xl p-4 flex items-center justify-between gap-3">
-                        <span className="text-xl font-black tracking-[0.25em] text-foreground">
-                          {showCodigo ? (codigoAtual ?? "—") : "••••••"}
-                        </span>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => setShowCodigo(!showCodigo)}
-                            className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                            title={showCodigo ? "Ocultar" : "Mostrar"}>
-                            {showCodigo ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                          {codigoAtual && (
-                            <button onClick={() => copiarCodigo(codigoAtual, setCopiadoConf)}
-                              className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                              title="Copiar código">
-                              {copiadoConf ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground">Compartilhe apenas com pessoas autorizadas a acessar esta fábrica.</p>
-                    </div>
-                  </div>
-
-                  {/* ── APARÊNCIA ── */}
+                  {/* APARÊNCIA */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border">
                       <h3 className="text-sm font-bold text-foreground">Aparência</h3>
@@ -893,9 +803,9 @@ export default function ExataApp() {
                       {mounted && (
                         <React.Fragment>
                           {[
-                            { value: "light",  label: "Claro",  description: "Fundo branco, ideal para ambientes iluminados", icon: Sun },
-                            { value: "dark",   label: "Escuro", description: "Fundo escuro, reduz fadiga visual à noite",       icon: Moon },
-                            { value: "system", label: "Sistema",description: "Segue automaticamente as configurações do dispositivo", icon: Monitor },
+                            { value: "light",  label: "Claro",   description: "Fundo branco, ideal para ambientes iluminados",          icon: Sun     },
+                            { value: "dark",   label: "Escuro",  description: "Fundo escuro, reduz fadiga visual à noite",              icon: Moon    },
+                            { value: "system", label: "Sistema", description: "Segue automaticamente as configurações do dispositivo",  icon: Monitor },
                           ].map(({ value, label, description, icon: Icon }) => (
                             <button key={value} onClick={() => setTheme(value)}
                               className={`w-full flex items-center gap-4 px-4 py-4 rounded-xl border transition-all text-left
@@ -919,7 +829,7 @@ export default function ExataApp() {
                     </div>
                   </div>
 
-                  {/* ── MANUAL TÉCNICO ── */}
+                  {/* MANUAL TÉCNICO */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden lg:col-span-2">
                     <div className="px-6 py-4 border-b border-border">
                       <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
@@ -938,7 +848,7 @@ export default function ExataApp() {
                         { title: "Manutenção", desc: "Gerencie ordens de serviço corretivas e preventivas por ativo. Status atualizável diretamente na lista." },
                         { title: "Relatórios", desc: "OEE por máquina, refugo por produto, ciclo real vs planejado, consumo de materiais e ranking de paradas. Filtros por período." },
                         { title: "Dashboard", desc: "Visão em tempo real: status das máquinas, OPs em andamento com progresso, estoque crítico e produção por máquina. Auto-refresh a cada 2 minutos." },
-                        { title: "Código de Acesso", desc: "O código de 6 caracteres é a única forma de entrar na fábrica. Compartilhe com cuidado. Qualquer dispositivo com o código acessa os mesmos dados." },
+                        { title: "Equipe", desc: "Convide colaboradores por e-mail e atribua roles que definem quais módulos cada usuário pode acessar. Gerencie permissões a qualquer momento." },
                       ].map(({ title, desc }) => (
                         <div key={title} className="space-y-1 border-l-2 border-primary/30 pl-3">
                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{title}</p>
@@ -957,4 +867,3 @@ export default function ExataApp() {
     </React.Fragment>
   )
 }
-
