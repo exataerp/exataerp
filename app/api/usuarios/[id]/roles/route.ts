@@ -24,9 +24,10 @@ async function getCallerEmpresa(callerId: string): Promise<string> {
 // Lista os roles de um usuário na empresa do caller.
 export async function GET(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const caller = await getUserFromToken(request)
     const empresaId = await getCallerEmpresa(caller.id)
     await assertSystemManager(caller.id, empresaId)
@@ -34,7 +35,7 @@ export async function GET(
     const { data, error } = await supabaseAdmin
       .from('v_user_roles')
       .select('role_name, role_display_name, role_description, granted_by, created_at')
-      .eq('user_id', params.id)
+      .eq('user_id', id)
       .eq('empresa_id', empresaId)
 
     if (error) throw error
@@ -54,9 +55,10 @@ export async function GET(
 // Body: { role_name: string }
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const caller = await getUserFromToken(request)
     const empresaId = await getCallerEmpresa(caller.id)
     await assertSystemManager(caller.id, empresaId)
@@ -82,7 +84,7 @@ export async function POST(
     const { data: targetPerfil } = await supabaseAdmin
       .from('perfis')
       .select('id')
-      .eq('user_id', params.id)
+      .eq('user_id', id)
       .eq('empresa_id', empresaId)
       .single()
 
@@ -96,9 +98,9 @@ export async function POST(
     const { error: insertErr } = await supabaseAdmin
       .from('user_roles')
       .insert({
-        user_id:    params.id,
+        user_id: id,
         empresa_id: empresaId,
-        role_id:    role.id,
+        role_id: role.id,
         granted_by: caller.id,
       })
 
@@ -127,9 +129,10 @@ export async function POST(
 // Body: { role_name: string }
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const caller = await getUserFromToken(request)
     const empresaId = await getCallerEmpresa(caller.id)
     await assertSystemManager(caller.id, empresaId)
@@ -141,7 +144,7 @@ export async function DELETE(
     }
 
     // Impede remover o próprio system_manager (ficaria sem acesso)
-    if (params.id === caller.id && role_name === 'system_manager') {
+    if (id === caller.id && role_name === 'system_manager') {
       return NextResponse.json(
         { error: 'Você não pode remover seu próprio role de System Manager.' },
         { status: 400 }
@@ -161,7 +164,7 @@ export async function DELETE(
     const { error: deleteErr } = await supabaseAdmin
       .from('user_roles')
       .delete()
-      .eq('user_id', params.id)
+      .eq('user_id', id)
       .eq('empresa_id', empresaId)
       .eq('role_id', role.id)
 
