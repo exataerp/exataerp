@@ -1,62 +1,56 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { supabaseAdmin, getUserFromToken, AuthError } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
-    const authHeader = request.headers.get('Authorization')
-    if (!authHeader?.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
-    const token = authHeader.slice(7)
-
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
-
-    // Valida token
-    const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(token)
-    if (authErr || !user) {
-      return NextResponse.json({ error: 'Token inválido' }, { status: 401 })
-    }
-
-    const body = await request.json()
-    const { nome, tema } = body
+    const user = await getUserFromToken(request)
+    const { nome, tema } = await request.json()
 
     if (!nome?.trim()) {
-      return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 })
+      return NextResponse.json({ error: 'Nome é obrigatório.' }, { status: 400 })
     }
 
-    // Atualiza perfil — transacional via try/catch completo
-    const { error: perfilErr } = await supabaseAdmin
+    // Busca perfil para obter empresa_id
+    const { data: perfil, error: perfilErr } = await supabaseAdmin
+      .from('perfis')
+      .select('id, empresa_id, first_access_completed')
+      .eq('user_id', user.id)
+      .single()
+
+    if (perfilErr || !perfil) {
+      return NextResponse.json({ error: 'Perfil não encontrado.' }, { status: 404 })
+    }
+
+    if (perfil.first_access_completed) {
+      return NextResponse.json(
+        { error: 'Primeiro acesso já foi concluído.' },
+        { status: 409 }
+      )
+    }
+
+    // Atualiza perfil
+    const { error: updateErr } = await supabaseAdmin
       .from('perfis')
       .update({
-        nome: nome.trim(),
+        nome:                   nome.trim(),
         first_access_completed: true,
-        terms_accepted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        terms_accepted_at:      new Date().toISOString(),
+        updated_at:             new Date().toISOString(),
       })
-      .eq('id', user.id)
+      .eq('id', perfil.id)
 
-    if (perfilErr) throw new Error(`Erro ao salvar perfil: ${perfilErr.message}`)
-
-    // Atualiza controle de acesso (marca como ativado)
-    await supabaseAdmin
-      .from('controle_acesso')
-      .update({ activated_at: new Date().toISOString() })
-      .eq('user_id', user.id)
+    if (updateErr) throw new Error(`Erro ao salvar perfil: ${updateErr.message}`)
 
     // Upsert preferências
     const { error: prefsErr } = await supabaseAdmin
       .from('user_preferences')
       .upsert(
         {
-          user_id: user.id,
-          theme: tema ?? 'dark',
-          language: 'pt-BR',
+          user_id:    user.id,
+          theme:      tema ?? 'dark',
+          language:   'pt-BR',
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' }
@@ -64,44 +58,45 @@ export async function POST(request: Request) {
 
     if (prefsErr) throw new Error(`Erro ao salvar preferências: ${prefsErr.message}`)
 
-    // Busca dados para redirecionar corretamente
-    const { data: perfil } = await supabaseAdmin
-      .from('perfis')
-      .select('empresa_id')
-      .eq('id', user.id)
-      .single()
-
-    const { data: controle } = await supabaseAdmin
-      .from('controle_acesso')
-      .select('nivel, empresa_id')
+    // Busca roles para redirecionar corretamente após o primeiro acesso
+    const { data: rolesData } = await supabaseAdmin
+      .from('v_user_roles')
+      .select('role_name')
       .eq('user_id', user.id)
-      .single()
+      .eq('empresa_id', perfil.empresa_id)
 
-    const empresaId = perfil?.empresa_id || controle?.empresa_id
+    const roles = (rolesData ?? []).map((r: any) => r.role_name)
+    const isSystemManager = roles.includes('system_manager')
 
+    // Busca empresa para saber se precisa do setup wizard
     const { data: empresa } = await supabaseAdmin
       .from('empresas')
       .select('onboarding_completed')
-      .eq('id', empresaId)
+      .eq('id', perfil.empresa_id)
       .single()
 
-    // Registra evento de auditoria (fire and forget)
+    // Registra auditoria (fire and forget)
     supabaseAdmin
       .from('authentication_logs')
       .insert({
-        company_id: empresaId,
-        user_id: user.id,
+        company_id: perfil.empresa_id,
+        user_id:    user.id,
         event_type: 'primeiro_acesso_concluido',
-        success: true,
+        success:    true,
       })
       .then(() => {})
 
     return NextResponse.json({
-      success: true,
-      nivel: controle?.nivel,
+      success:              true,
+      roles,
+      is_system_manager:    isSystemManager,
       onboarding_completed: empresa?.onboarding_completed ?? false,
     })
+
   } catch (err: any) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status })
+    }
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
