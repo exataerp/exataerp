@@ -1,52 +1,65 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { ShieldAlert, Users, Plus, Building2, Mail, Power, RefreshCw, Loader2 } from "lucide-react"
-import { supabase } from "@/components/supabase"
+import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 
 export function MasterTab() {
+  const supabase = createClient()
+  const { toast } = useToast()
+
   const [isAdding, setIsAdding] = useState(false)
   const [clientes, setClientes] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  
+  const [acessoNegado, setAcessoNegado] = useState(false)
+
   const [novaEmpresa, setNovaEmpresa] = useState("")
   const [novoEmail, setNovoEmail] = useState("")
   const [isCreating, setIsCreating] = useState(false)
 
-  const { toast } = useToast()
+  const authHeader = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return { Authorization: `Bearer ${session?.access_token ?? ''}` }
+  }, [supabase])
 
-  const carregarClientes = async () => {
+  const carregarClientes = useCallback(async () => {
     setIsLoading(true)
     try {
-      const { data, error } = await supabase
-        .from("empresas")
-        .select("*")
-        .order("created_at", { ascending: false })
+      const headers = await authHeader()
+      const res = await fetch('/api/admin/fabricas', { headers })
+      const json = await res.json()
 
-      if (error) throw error
-      setClientes(data || [])
+      if (res.status === 403) {
+        setAcessoNegado(true)
+        return
+      }
+      if (!res.ok) throw new Error(json.error ?? 'Erro ao carregar fábricas.')
+
+      setClientes(json.empresas ?? [])
     } catch (error: any) {
-      toast({ title: "Erro de conexão", description: "Não foi possível carregar as fábricas.", variant: "destructive" })
+      toast({ title: "Erro de conexão", description: error.message ?? "Não foi possível carregar as fábricas.", variant: "destructive" })
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [authHeader, toast])
 
   useEffect(() => {
     carregarClientes()
-  }, [])
+  }, [carregarClientes])
 
   const toggleStatus = async (id: string, currentStatus: string) => {
     const novoStatus = currentStatus === "inativo" ? "ativo" : "inativo"
     try {
-      const { error } = await supabase
-        .from("empresas")
-        .update({ status: novoStatus })
-        .eq("id", id)
+      const headers = await authHeader()
+      const res = await fetch('/api/admin/fabricas', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ id, status: novoStatus }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Erro ao alterar status.')
 
-      if (error) throw error
-      
       toast({ title: "Comando executado", description: `O acesso da fábrica foi alterado para ${novoStatus.toUpperCase()}.` })
       carregarClientes()
     } catch (error: any) {
@@ -62,20 +75,20 @@ export function MasterTab() {
 
     setIsCreating(true)
     try {
+      const headers = await authHeader()
       const response = await fetch('/api/admin/nova-fabrica', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email: novoEmail.trim(), 
-          nomeFabrica: novaEmpresa.trim()
-        })
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({
+          email: novoEmail.trim(),
+          nomeFabrica: novaEmpresa.trim(),
+        }),
       })
 
       const result = await response.json()
-      
       if (!response.ok) throw new Error(result.error || "Erro desconhecido ao criar acesso.")
 
-      toast({ title: "Fábrica Operacional", description: "O ambiente foi isolado e o link de acesso foi enviado ao e-mail do cliente." })
+      toast({ title: "Fábrica Operacional", description: "O ambiente foi isolado e o convite foi enviado ao e-mail do administrador." })
       setNovaEmpresa("")
       setNovoEmail("")
       setIsAdding(false)
@@ -85,6 +98,16 @@ export function MasterTab() {
     } finally {
       setIsCreating(false)
     }
+  }
+
+  if (acessoNegado) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <ShieldAlert className="h-10 w-10 text-destructive mb-3" />
+        <p className="text-sm font-bold text-foreground">Acesso restrito</p>
+        <p className="text-xs text-muted-foreground mt-1">Esta área é exclusiva para Super Admin.</p>
+      </div>
+    )
   }
 
   return (
@@ -101,7 +124,7 @@ export function MasterTab() {
           <button onClick={carregarClientes} className="h-10 w-10 flex items-center justify-center bg-muted text-foreground rounded-xl shadow-sm hover:opacity-90 transition-all" title="Atualizar lista">
             <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           </button>
-          <button 
+          <button
             onClick={() => setIsAdding(!isAdding)}
             className="h-10 px-4 bg-primary text-primary-foreground font-bold text-xs uppercase tracking-widest rounded-xl flex items-center gap-2 shadow-md hover:opacity-90 transition-all"
           >
@@ -118,12 +141,12 @@ export function MasterTab() {
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome da Empresa</label>
               <div className="relative">
                 <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={novaEmpresa}
                   onChange={(e) => setNovaEmpresa(e.target.value)}
-                  placeholder="Indústria Exemplo Ltda" 
-                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" 
+                  placeholder="Indústria Exemplo Ltda"
+                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
             </div>
@@ -131,17 +154,17 @@ export function MasterTab() {
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">E-mail do Administrador</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <input 
-                  type="email" 
+                <input
+                  type="email"
                   value={novoEmail}
                   onChange={(e) => setNovoEmail(e.target.value)}
-                  placeholder="admin@industria.com" 
-                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" 
+                  placeholder="admin@industria.com"
+                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
             </div>
           </div>
-          <button 
+          <button
             onClick={handleCriarConvite}
             disabled={isCreating}
             className="mt-4 h-10 w-full flex items-center justify-center bg-foreground text-background font-bold text-xs uppercase tracking-widest rounded-xl shadow-md hover:opacity-90 transition-all disabled:opacity-50"
@@ -161,7 +184,7 @@ export function MasterTab() {
             {clientes.length} {clientes.length === 1 ? 'Registro' : 'Registros'}
           </span>
         </div>
-        
+
         <div className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -197,9 +220,9 @@ export function MasterTab() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <button 
+                        <button
                           onClick={() => toggleStatus(cliente.id, cliente.status)}
-                          className={`p-2 rounded-lg transition-colors ${cliente.status === 'inativo' ? 'text-green-500 hover:bg-green-500/10' : 'text-destructive hover:bg-destructive/10'}`} 
+                          className={`p-2 rounded-lg transition-colors ${cliente.status === 'inativo' ? 'text-green-500 hover:bg-green-500/10' : 'text-destructive hover:bg-destructive/10'}`}
                           title={cliente.status === 'inativo' ? 'Reativar Acesso' : 'Suspender Acesso'}
                         >
                           <Power className="h-4 w-4" />
