@@ -68,6 +68,23 @@ export async function assertSystemManager(userId: string, empresaId: string) {
 }
 
 // ------------------------------------------------------------
+// Helper: verifica se usuário é Super Admin GLOBAL (dono do SaaS)
+// Distinto de system_manager, que é escopado por empresa.
+// Usado apenas no painel Master (gestão de todas as fábricas/clientes).
+// ------------------------------------------------------------
+export async function assertSuperAdmin(userId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('super_admins')
+    .select('user_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error || !data) {
+    throw new AuthError('Acesso negado. Super Admin necessário.', 403)
+  }
+}
+
+// ------------------------------------------------------------
 // Erro tipado para respostas HTTP
 // ------------------------------------------------------------
 export class AuthError extends Error {
