@@ -14,16 +14,17 @@ import { RelatoriosTab, RELATORIOS_CONFIG, type RelatoId } from "@/components/re
 import { DashboardTab } from "@/components/dashboard-tab"
 import { MaquinasTab } from "@/components/maquinas-tab"
 import { ManutencaoTab } from "@/components/manutencao-tab"
+import { EquipeTab } from "@/components/equipe-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut
+  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
 } from "lucide-react"
 
-type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes"
+type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes" | "equipe"
 
 const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.ElementType }[] = [
   { id: "dashboard",  label: "Dashboard",       sublabel: "Visão em tempo real",     icon: LayoutDashboard },
@@ -40,9 +41,10 @@ const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.Eleme
 const STORAGE_TAB = "exata_aba_ativa"
 
 export default function ExataApp() {
-  const { session, loading: authLoading, signOut } = useAuth()
+  const { session, loading: authLoading, signOut, canAccess, isSystemManager } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
+  const visibleNavItems = NAV_ITEMS.filter(item => canAccess(item.id as any))
 
   // código de acesso (card de configurações)
   const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
@@ -444,7 +446,7 @@ export default function ExataApp() {
           )}
 
           <nav className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-2 py-3 space-y-1">
-            {NAV_ITEMS.map((item) => (
+            {visibleNavItems.map((item) => (
               <React.Fragment key={item.id}>
                 <NavButton
                   {...item}
@@ -485,6 +487,17 @@ export default function ExataApp() {
           </nav>
 
           <div className="px-2 py-3 border-t border-border space-y-1">
+            {isSystemManager && (
+              <NavButton
+                id="equipe"
+                label="Equipe"
+                sublabel="Usuários e permissões"
+                icon={Users}
+                isActive={activeTab === "equipe"}
+                isCollapsed={collapsed}
+                onClick={() => goTab("equipe")}
+              />
+            )}
             <NavButton
               id="configuracoes"
               label="Configurações"
@@ -531,7 +544,7 @@ export default function ExataApp() {
           </div>
 
           <nav className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-3 space-y-1">
-            {NAV_ITEMS.map((item) => {
+            {visibleNavItems.map((item) => {
               const Icon = item.icon
               const isActive = activeTab === item.id
               return (
@@ -583,6 +596,21 @@ export default function ExataApp() {
           </nav>
 
           <div className="px-3 py-3 border-t border-border space-y-1">
+            {isSystemManager && (
+              <button
+                onClick={() => { goTab("equipe"); setMobileOpen(false) }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
+                  ${activeTab === "equipe" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+              >
+                <Users className="h-5 w-5 flex-shrink-0" />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-bold leading-tight">Equipe</span>
+                  <span className={`text-[10px] leading-tight truncate ${activeTab === "equipe" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                    Usuários e permissões
+                  </span>
+                </div>
+              </button>
+            )}
             <button
               onClick={() => goTab("configuracoes")}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
@@ -678,7 +706,11 @@ export default function ExataApp() {
               </div>
             )}
 
-{activeTab === "configuracoes" && (
+{activeTab === "equipe" && (
+              <EquipeTab />
+            )}
+
+            {activeTab === "configuracoes" && (
               <div className="space-y-6 pb-12 animate-in fade-in duration-300">
                 <div>
                   <h2 className="text-lg font-bold text-foreground">Configurações</h2>
