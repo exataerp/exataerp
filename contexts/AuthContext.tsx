@@ -112,11 +112,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single()
 
       // Busca roles via view (RLS garante que só vê os próprios)
-      const { data: rolesData } = await supabase
+      const { data: rolesData, error: rolesError } = await supabase
         .from('v_user_roles')
         .select('role_name')
         .eq('user_id', user.id)
         .eq('empresa_id', perfil.empresa_id)
+
+      if (rolesError) {
+        throw new Error(`Não foi possível carregar as permissões: ${rolesError.message}`)
+      }
 
       const roles = (rolesData ?? []).map((r: any) => r.role_name as RoleName)
 
