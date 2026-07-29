@@ -74,6 +74,7 @@ export async function POST(request: Request) {
     // 4. Cria o perfil
     const { error: perfilErr } = await supabaseAdmin.from('perfis').upsert({
       id: userId,
+      user_id: userId,
       empresa_id: EMPRESA_ID,
       email: cleanEmail,
       nome: nome || 'Administrador',

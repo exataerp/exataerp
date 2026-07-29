@@ -15,6 +15,9 @@ export const dynamic = 'force-dynamic'
 // Body: { email: string, nomeFabrica: string }
 
 export async function POST(request: Request) {
+  let createdEmpresaId: string | null = null
+  let invitedUserId: string | null = null
+
   try {
     const caller = await getUserFromToken(request)
     await assertSuperAdmin(caller.id)
@@ -38,6 +41,7 @@ export async function POST(request: Request) {
       .single()
 
     if (empresaError) throw new Error(`Erro ao criar empresa: ${empresaError.message}`)
+    createdEmpresaId = empresa.id
 
     // Busca o id do role system_manager (quem administra a empresa)
     const { data: role, error: roleError } = await supabaseAdmin
@@ -62,6 +66,7 @@ export async function POST(request: Request) {
     }
 
     const newUserId = authData.user.id
+    invitedUserId = newUserId
 
     // Cria o perfil (id e user_id precisam ser o mesmo valor: o id do auth.users)
     const { error: perfilError } = await supabaseAdmin
@@ -74,11 +79,23 @@ export async function POST(request: Request) {
         status: 'ativo',
         empresa_id: empresa.id,
         first_access_completed: false,
-        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
 
     if (perfilError) throw new Error(`Erro ao criar perfil: ${perfilError.message}`)
+
+    // Mantém compatibilidade com as políticas RLS operacionais, que validam
+    // o vínculo de empresa pela tabela controle_acesso.
+    const { error: acessoError } = await supabaseAdmin
+      .from('controle_acesso')
+      .insert({
+        user_id: newUserId,
+        empresa_id: empresa.id,
+        nivel: 'admin',
+        status: 'ativo',
+      })
+
+    if (acessoError) throw new Error(`Erro ao criar controle de acesso: ${acessoError.message}`)
 
     // Atribui o role system_manager ao administrador da nova empresa
     const { error: roleAssignError } = await supabaseAdmin
@@ -99,6 +116,20 @@ export async function POST(request: Request) {
     })
 
   } catch (err: any) {
+    // Convite, perfil, acesso e role formam uma única operação lógica.
+    // Remove qualquer criação parcial para permitir uma nova tentativa limpa.
+    if (invitedUserId) {
+      await supabaseAdmin.from('user_roles').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('perfis').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('perfis').delete().eq('id', invitedUserId)
+      await supabaseAdmin.auth.admin.deleteUser(invitedUserId)
+    }
+
+    if (createdEmpresaId) {
+      await supabaseAdmin.from('empresas').delete().eq('id', createdEmpresaId)
+    }
+
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status })
     }

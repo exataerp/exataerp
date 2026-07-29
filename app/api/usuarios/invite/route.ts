@@ -19,6 +19,8 @@ export const dynamic = 'force-dynamic'
 // }
 
 export async function POST(request: Request) {
+  let invitedUserId: string | null = null
+
   try {
     const caller = await getUserFromToken(request)
 
@@ -104,6 +106,7 @@ export async function POST(request: Request) {
     }
 
     const newUserId = authData.user.id
+    invitedUserId = newUserId
 
     // Cria perfil
     const { error: perfilErr } = await supabaseAdmin
@@ -116,11 +119,25 @@ export async function POST(request: Request) {
         status:                 'ativo',
         empresa_id:             empresaId,
         first_access_completed: false,
-        created_at:             new Date().toISOString(),
         updated_at:             new Date().toISOString(),
       })
 
     if (perfilErr) throw new Error(`Erro ao criar perfil: ${perfilErr.message}`)
+
+    // As políticas RLS dos módulos operacionais usam controle_acesso para
+    // autorizar a empresa. Sem este vínculo o login funciona, mas os dados
+    // ficam inacessíveis logo após o primeiro acesso.
+    const nivelAcesso = roles.includes('system_manager') ? 'admin' : 'operador'
+    const { error: acessoErr } = await supabaseAdmin
+      .from('controle_acesso')
+      .insert({
+        user_id:    newUserId,
+        empresa_id: empresaId,
+        nivel:      nivelAcesso,
+        status:     'ativo',
+      })
+
+    if (acessoErr) throw new Error(`Erro ao criar controle de acesso: ${acessoErr.message}`)
 
     // Atribui roles
     const userRolesInsert = rolesValidos.map((role: any) => ({
@@ -154,6 +171,14 @@ export async function POST(request: Request) {
     })
 
   } catch (err: any) {
+    if (invitedUserId) {
+      await supabaseAdmin.from('user_roles').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('perfis').delete().eq('user_id', invitedUserId)
+      await supabaseAdmin.from('perfis').delete().eq('id', invitedUserId)
+      await supabaseAdmin.auth.admin.deleteUser(invitedUserId)
+    }
+
     if (err instanceof AuthError) {
       return NextResponse.json({ error: err.message }, { status: err.status })
     }
