@@ -158,10 +158,11 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
 
 // ─── Modal de Finalizar ────────────────────────────────────────────────────────
 
-function ModalFinalizar({ onConfirm, onCancel, loading }: {
+function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
   onConfirm: (dados: { produzidas: number; refugo: number; retrabalho: number; encerramento: "continuar" | "encerrar" | "encerrar_parcial" }) => void
   onCancel: () => void
   loading?: boolean
+  isUltimaEtapa?: boolean
 }) {
   const [produzidas, setProduzidas] = useState("")
   const [refugo, setRefugo] = useState("")
@@ -217,12 +218,16 @@ function ModalFinalizar({ onConfirm, onCancel, loading }: {
           </div>
 
           <div className="space-y-1.5 pt-1">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">O que fazer com a OP?</label>
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Status desta Operação</label>
             <div className="space-y-2">
               {[
-                { value: "continuar", label: "Continuar produzindo", desc: "Salva este apontamento e segue a OP aberta" },
-                { value: "encerrar", label: "Encerrar OP", desc: "Marca a OP como concluída" },
-                { value: "encerrar_parcial", label: "Encerrar parcialmente", desc: "Encerra com quantidade menor que o planejado" },
+                { value: "continuar", label: "Salvar e Continuar Apontamento", desc: "Salva o tempo e peças produzidas, mantendo a operação aberta" },
+                {
+                  value: "encerrar",
+                  label: isUltimaEtapa ? "Concluir Operação e Encerrar OP" : "Concluir esta Operação",
+                  desc: isUltimaEtapa ? "Finaliza a última etapa do roteiro e encerra a OP no sistema" : "Finaliza esta etapa e libera a próxima operação do roteiro",
+                },
+                { value: "encerrar_parcial", label: "Concluir Operação Parcialmente", desc: "Encerra esta etapa com quantidade parcial sem encerrar a OP" },
               ].map(op => (
                 <button
                   key={op.value}
@@ -698,36 +703,44 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     if (dados.encerramento !== "continuar") {
       const ordem = ordens.find(o => o.id === sessao.ordemId)
       if (ordem) {
+        const ultimaOperacaoId = ultimaOperacaoPorProduto[ordem.produto_codigo]
+        const isUltimaEtapa = !ultimaOperacaoId || sessao.operacaoId === ultimaOperacaoId
         const pecasBoas = dados.produzidas - dados.refugo
 
-        const { data: resultado, error: erroEstoque } = await supabase.rpc("finalizar_apontamento_estoque", {
-          p_empresa_id: empresaAtivaId,
-          p_ordem_id: sessao.ordemId,
-          p_produto_codigo: ordem.produto_codigo,
-          p_pecas_boas: pecasBoas,
-          p_refugo: dados.refugo,
-          p_observacao: `OP ${ordem.numero_op} — ${pecasBoas} peças boas`,
-        })
+        // Entrada de estoque de produto acabado SOMENTE se for a ÚLTIMA ETAPA do roteiro!
+        if (isUltimaEtapa && pecasBoas > 0) {
+          const { data: resultado, error: erroEstoque } = await supabase.rpc("finalizar_apontamento_estoque", {
+            p_empresa_id: empresaAtivaId,
+            p_ordem_id: sessao.ordemId,
+            p_produto_codigo: ordem.produto_codigo,
+            p_pecas_boas: pecasBoas,
+            p_refugo: dados.refugo,
+            p_observacao: `OP ${ordem.numero_op} — ${pecasBoas} peças boas (conclusão do roteiro)`,
+          })
 
-        if (erroEstoque) {
-          toast({ title: "Erro ao baixar estoque", description: erroEstoque.message, variant: "destructive" })
-          return
-        }
+          if (erroEstoque) {
+            toast({ title: "Erro ao baixar estoque", description: erroEstoque.message, variant: "destructive" })
+            return
+          }
 
-        const avisos = (resultado as any)?.avisos as { insumo: string; consumo: number; disponivel: number }[] | undefined
-        if (avisos && avisos.length > 0) {
-          for (const a of avisos) {
-            toast({
-              title: `⚠ Estoque insuficiente: ${a.insumo}`,
-              description: `Consumo: ${a.consumo} — Disponível: ${a.disponivel.toFixed(3)}. Saldo foi a negativo.`,
-              variant: "destructive",
-            })
+          const avisos = (resultado as any)?.avisos as { insumo: string; consumo: number; disponivel: number }[] | undefined
+          if (avisos && avisos.length > 0) {
+            for (const a of avisos) {
+              toast({
+                title: `⚠ Estoque insuficiente: ${a.insumo}`,
+                description: `Consumo: ${a.consumo} — Disponível: ${a.disponivel.toFixed(3)}. Saldo foi a negativo.`,
+                variant: "destructive",
+              })
+            }
           }
         }
 
-        // Encerra a OP — só no encerramento total. Parcial deixa a OP aberta pra continuar depois.
-        if (dados.encerramento === "encerrar") {
+        // Encerra a OP no banco SOMENTE no encerramento da última etapa do roteiro.
+        // Operações intermediárias encerradas mantêm a OP ativa (em_andamento) para as próximas etapas.
+        if (dados.encerramento === "encerrar" && isUltimaEtapa) {
           await supabase.from("ordens_producao").update({ status: "encerrada" }).eq("id", sessao.ordemId)
+        } else {
+          await supabase.from("ordens_producao").update({ status: "em_andamento" }).eq("id", sessao.ordemId)
         }
       }
     }
@@ -736,7 +749,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setSessaoEmAcaoId(null)
     await loadData()
 
-    const labels = { continuar: "Apontamento salvo", encerrar: "OP encerrada e estoque atualizado", encerrar_parcial: "OP encerrada parcialmente e estoque atualizado" }
+    const labels = { continuar: "Apontamento salvo", encerrar: "Operação finalizada", encerrar_parcial: "Operação finalizada parcialmente" }
       toast({ title: `✅ ${labels[dados.encerramento]}` })
     } finally {
       finalizandoRef.current = false
@@ -771,10 +784,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       const totalSegundos = aps.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
       let pct = op.quantidade > 0 ? Math.min(100, (totalProduzidas / op.quantidade) * 100) : 0
       
-      // Só o encerramento total tranca a OP. Parcial é um "salvamento de progresso":
-      // registra o que já foi produzido, mas deixa a OP disponível pra continuar depois.
-      const foiEncerradaManualmente = aps.some(a => a.encerramento === "encerrar")
-      const fechada = foiEncerradaManualmente || op.status === "encerrada" || totalProduzidas >= op.quantidade
+      // A OP só é fechada se o encerramento tiver ocorrido na ÚLTIMA ETAPA do roteiro ou status estritamente encerrada
+      const foiEncerradaNaUltimaEtapa = ultimaOperacaoId
+        ? aps.some(a => a.operacao_id === ultimaOperacaoId && a.encerramento === "encerrar")
+        : aps.some(a => a.encerramento === "encerrar")
+
+      const fechada = op.status === "encerrada" || foiEncerradaNaUltimaEtapa || (totalProduzidas >= op.quantidade && totalProduzidas > 0)
 
       // Garantia de que OPs encerradas com peças produzidas reflitam seu percentual real de entrega
       if (fechada && pct === 0 && op.quantidade > 0 && totalProduzidas > 0) {
@@ -878,13 +893,21 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           onCancel={() => setShowModalPausa(false)}
         />
       )}
-      {showModalFinalizar && (
-        <ModalFinalizar
-          onConfirm={verificarEstoqueEFinalizar}
-          onCancel={() => setShowModalFinalizar(false)}
-          loading={finalizando}
-        />
-      )}
+      {showModalFinalizar && (() => {
+        const sessao = sessoes.find(s => s.apontamentoId === sessaoEmAcaoId)
+        const ordem = sessao ? ordens.find(o => o.id === sessao.ordemId) : null
+        const ultimaOperacaoId = ordem ? ultimaOperacaoPorProduto[ordem.produto_codigo] : null
+        const isUltimaEtapa = !sessao || !ultimaOperacaoId || sessao.operacaoId === ultimaOperacaoId
+
+        return (
+          <ModalFinalizar
+            onConfirm={verificarEstoqueEFinalizar}
+            onCancel={() => setShowModalFinalizar(false)}
+            loading={finalizando}
+            isUltimaEtapa={isUltimaEtapa}
+          />
+        )
+      })()}
 
       {/* Modal aviso estoque insuficiente */}
       {showAvisoEstoque && (
