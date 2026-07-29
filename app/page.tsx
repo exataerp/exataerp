@@ -18,6 +18,7 @@ import { EquipeTab } from "@/components/equipe-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
+import { formatarCnpj } from "@/lib/cnpj"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
@@ -107,8 +108,22 @@ export default function ExataApp() {
   // --- Inicialização ---
   useEffect(() => {
     setMounted(true)
+    const params = new URLSearchParams(window.location.search)
+    const tabParam = params.get("tab") as TabId | null
     const savedTab = localStorage.getItem(STORAGE_TAB) as TabId
-    if (savedTab && NAV_ITEMS.find(n => n.id === savedTab)) setActiveTab(savedTab)
+    if (tabParam === "configuracoes") {
+      setActiveTab("configuracoes")
+      localStorage.setItem(STORAGE_TAB, "configuracoes")
+    } else if (savedTab && NAV_ITEMS.find(n => n.id === savedTab)) {
+      setActiveTab(savedTab)
+    }
+    if (params.get("empresa") === "atualizada") {
+      toast({
+        title: "Empresa localizada",
+        description: "Os dados públicos do CNPJ foram preenchidos nas configurações.",
+      })
+      window.history.replaceState({}, "", "/?tab=configuracoes")
+    }
   }, [])
 
   // Carrega dados quando empresa estiver disponível
@@ -808,8 +823,21 @@ export default function ExataApp() {
                   {/* ── DADOS DA FÁBRICA ── */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border">
-                      <h3 className="text-sm font-bold text-foreground">Dados da Fábrica</h3>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">Informações gerais e operacionais</p>
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <h3 className="text-sm font-bold text-foreground">Dados da Fábrica</h3>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Informações gerais e operacionais</p>
+                        </div>
+                        {isSystemManager && (
+                          <button
+                            type="button"
+                            onClick={() => { window.location.href = "/acessar-empresa" }}
+                            className="h-8 px-3 rounded-lg border border-primary/25 bg-primary/10 text-primary text-[10px] font-bold uppercase tracking-wider hover:bg-primary/15 transition-colors flex-shrink-0"
+                          >
+                            Buscar por CNPJ
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="p-6 space-y-4">
                       <div className="grid grid-cols-2 gap-3">
@@ -820,7 +848,8 @@ export default function ExataApp() {
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">CNPJ</label>
-                          <input type="text" value={confCnpj} onChange={e => setConfCnpj(e.target.value)} placeholder="00.000.000/0000-00"
+                          <input type="text" value={confCnpj} onChange={e => setConfCnpj(formatarCnpj(e.target.value))} placeholder="00.000.000/0000-00"
+                            maxLength={18} autoCapitalize="characters" spellCheck={false}
                             className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
                         </div>
                         <div className="space-y-1.5">
