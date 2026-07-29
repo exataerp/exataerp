@@ -6,7 +6,8 @@ import { useToast } from "@/hooks/use-toast"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, Plus, Trash2, ClipboardList, TrendingUp,
-  AlertTriangle, CheckCircle2, Clock, Package, Factory, ChevronDown, X, Wrench
+  AlertTriangle, CheckCircle2, Clock, Package, Factory, ChevronDown, X, Wrench,
+  Search, RotateCcw
 } from "lucide-react"
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -297,8 +298,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [showAvisoEstoque, setShowAvisoEstoque] = useState(false)
   const [avisoItens, setAvisoItens] = useState<{ codigo: string; descricao: string; disponivel: number; necessario: number; unidade: string }[]>([])
 
-  // Painel
+  // Painel & Filtros de OPs
   const [opExpandida, setOpExpandida] = useState<string | null>(null)
+  const [filtroStatusOP, setFiltroStatusOP] = useState<"ativas" | "encerradas" | "todas">("ativas")
+  const [buscaOP, setBuscaOP] = useState("")
 
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
@@ -445,6 +448,17 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       toast({ title: "Selecione a OP e a operação", variant: "destructive" })
       return
     }
+
+    const resumoSelecionado = resumos.find(r => r.op.id === ordemSelecionadaId)
+    if (resumoSelecionado?.fechada || resumoSelecionado?.op.status === "encerrada") {
+      toast({
+        title: "OP Encerrada",
+        description: "Não é possível iniciar apontamento em uma Ordem de Produção encerrada.",
+        variant: "destructive",
+      })
+      return
+    }
+
     const op = operacoes.find(o => o.id === operacaoSelecionadaId)
     if (!op) return
 
@@ -809,7 +823,37 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const pctRefugo = temBaseRefugo
       ? ((totalRefugo / (totalProduzidas + totalRefugo)) * 100).toFixed(1) : "N/A"
     return { totalOPs, opsFechadas, totalProduzidas, totalRefugo, pctRefugo, temBaseRefugo }
-  }, [resumos, apontamentos, ordens])
+  }, [ordens, apontamentos, resumos])
+
+  const resumosFiltrados = useMemo(() => {
+    return resumos.filter(r => {
+      if (filtroStatusOP === "ativas" && r.fechada) return false
+      if (filtroStatusOP === "encerradas" && !r.fechada) return false
+
+      if (buscaOP.trim()) {
+        const q = buscaOP.toLowerCase().trim()
+        const desc = (mapaDescricaoProdutos[r.op.produto_codigo] || "").toLowerCase()
+        const num = r.op.numero_op.toLowerCase()
+        const cod = r.op.produto_codigo.toLowerCase()
+        return num.includes(q) || cod.includes(q) || desc.includes(q)
+      }
+      return true
+    })
+  }, [resumos, filtroStatusOP, buscaOP, mapaDescricaoProdutos])
+
+  const handleReabrirOP = async (opId: string) => {
+    const { error } = await supabase
+      .from("ordens_producao")
+      .update({ status: "em_andamento" })
+      .eq("id", opId)
+
+    if (error) {
+      toast({ title: "Erro ao reabrir OP", description: error.message, variant: "destructive" })
+    } else {
+      toast({ title: "✅ OP Reaberta", description: "A OP retornou para a lista de OPs ativas." })
+      await loadData()
+    }
+  }
 
   const ordemAtual = ordens.find(o => o.id === ordemSelecionadaId)
 
@@ -1169,25 +1213,71 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         {/* Painel de OPs */}
         <div className="md:col-span-2 space-y-4">
           <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-border">
-              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-primary" /> Acompanhamento de OPs
-              </h3>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Planejado x realizado por ordem de produção</p>
+            <div className="px-6 py-4 border-b border-border space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    <TrendingUp className="h-4 w-4 text-primary" /> Acompanhamento de OPs
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Planejado x realizado por ordem de produção</p>
+                </div>
+                {/* Abas de filtro */}
+                <div className="flex items-center gap-1 bg-muted p-1 rounded-xl text-xs font-bold self-start sm:self-auto">
+                  <button
+                    onClick={() => setFiltroStatusOP("ativas")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "ativas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    Ativas ({resumos.filter(r => !r.fechada).length})
+                  </button>
+                  <button
+                    onClick={() => setFiltroStatusOP("encerradas")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "encerradas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    Encerradas ({resumos.filter(r => r.fechada).length})
+                  </button>
+                  <button
+                    onClick={() => setFiltroStatusOP("todas")}
+                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "todas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    Todas ({resumos.length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Campo de Busca */}
+              <div className="relative">
+                <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Buscar por OP, código ou descrição do produto..."
+                  value={buscaOP}
+                  onChange={(e) => setBuscaOP(e.target.value)}
+                  className="w-full h-9 pl-9 pr-4 rounded-xl border border-border bg-input text-xs text-foreground outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+                {buscaOP && (
+                  <button onClick={() => setBuscaOP("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
-              {resumos.length === 0 && (
+              {resumosFiltrados.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16 text-center px-6">
                   <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-4">
                     <ClipboardList className="h-6 w-6 text-muted-foreground" />
                   </div>
-                  <p className="text-sm font-bold text-foreground">Nenhuma OP na carteira</p>
-                  <p className="text-xs text-muted-foreground mt-1">Crie ordens de produção no módulo PCP para começar.</p>
+                  <p className="text-sm font-bold text-foreground">
+                    {buscaOP ? "Nenhuma OP encontrada" : filtroStatusOP === "encerradas" ? "Nenhuma OP encerrada" : "Nenhuma OP ativa"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {buscaOP ? `Nenhum resultado corresponde a "${buscaOP}"` : filtroStatusOP === "encerradas" ? "OPs concluídas aparecerão aqui para consulta de histórico." : "Crie ordens de produção no módulo PCP para começar."}
+                  </p>
                 </div>
               )}
 
-              {resumos.map(resumo => {
+              {resumosFiltrados.map(resumo => {
                 const badge = badgeStatus(resumo.pct, resumo.fechada)
                 const expandida = opExpandida === resumo.op.id
 
@@ -1205,6 +1295,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                             )
                           })()}
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.classes}`}>{badge.label}</span>
+                          {resumo.fechada && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleReabrirOP(resumo.op.id)
+                              }}
+                              className="text-[10px] font-bold px-2 py-0.5 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 rounded-full border border-amber-500/20 flex items-center gap-1 transition-colors"
+                              title="Reabrir OP para continuar produção"
+                            >
+                              <RotateCcw className="h-3 w-3" /> Reabrir
+                            </button>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
                           Meta: <strong className="text-foreground">{resumo.op.quantidade} peças</strong>
