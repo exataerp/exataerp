@@ -104,6 +104,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
   }, [periodo])
 
   const [operacoes, setOperacoes] = useState<{ id: string; maquina_id?: string }[]>([])
+  const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
 
   const loadData = async (silent = false) => {
     if (!empresaAtivaId) return
@@ -135,7 +136,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .eq("empresa_id", empresaAtivaId)
           .gte("inicio", inicioISO),
         supabase.from("produtos")
-          .select("codigo, operacoes(id, ordem)")
+          .select("codigo, descricao, operacoes(id, ordem)")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamentos")
           .select("id, maquina_id, status, created_at")
@@ -164,13 +165,16 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
       // Mapeia produto -> id da última operação do roteiro (a que realmente entrega a peça pronta)
       const mapaUltimaOp: Record<string, string> = {}
+      const mapaDesc: Record<string, string> = {}
       for (const p of (prods || []) as any[]) {
+        if (p.descricao) mapaDesc[p.codigo] = p.descricao
         const opsRoteiro = (p.operacoes || []) as { id: string; ordem: number }[]
         if (opsRoteiro.length === 0) continue
         const ultima = opsRoteiro.reduce((a, b) => (b.ordem > a.ordem ? b : a))
         mapaUltimaOp[p.codigo] = ultima.id
       }
       setUltimaOperacaoPorProduto(mapaUltimaOp)
+      setMapaDescricaoProdutos(mapaDesc)
 
       setUltimaAtualizacao(new Date())
     } finally {
@@ -509,15 +513,20 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                 <p className="text-xs text-muted-foreground mt-1">Todas as ordens foram encerradas</p>
               </div>
             )}
-            {opsEmAndamento.map(({ op, produzidas, pct, atrasada, emAndamento }) => (
-              <div key={op.id} className={`px-5 py-3 ${atrasada ? "bg-destructive/5" : ""}`}>
-                <div className="flex items-center justify-between mb-1.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs font-bold text-foreground">{op.numero_op}</span>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 bg-primary/10 text-primary rounded-full">{op.produto_codigo}</span>
-                    {atrasada && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-destructive/10 text-destructive rounded-full">Atrasada</span>}
-                    {emAndamento && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-green-500/10 text-green-600 rounded-full flex items-center gap-0.5"><span className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />Rodando</span>}
-                  </div>
+            {opsEmAndamento.map(({ op, produzidas, pct, atrasada, emAndamento }) => {
+              const desc = mapaDescricaoProdutos[op.produto_codigo]
+              const prodTexto = desc ? `${op.produto_codigo} - ${desc}` : op.produto_codigo
+              const opTitle = op.numero_op.toLowerCase().startsWith("op") ? op.numero_op : `OP ${op.numero_op}`
+
+              return (
+                <div key={op.id} className={`px-5 py-3 ${atrasada ? "bg-destructive/5" : ""}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs font-bold text-foreground">{opTitle}</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[220px]" title={prodTexto}>{prodTexto}</span>
+                      {atrasada && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-destructive/10 text-destructive rounded-full flex-shrink-0">Atrasada</span>}
+                      {emAndamento && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-green-500/10 text-green-600 rounded-full flex items-center gap-0.5 flex-shrink-0"><span className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />Rodando</span>}
+                    </div>
                   <div className="text-right flex-shrink-0 ml-3">
                     <span className="text-sm font-bold text-foreground">{pct.toFixed(0)}%</span>
                     <p className="text-[10px] text-muted-foreground">{produzidas}/{op.quantidade} pç</p>
