@@ -885,29 +885,38 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
                               )}
                               {daySlices.map((slice) => {
                                 const pct = slice.totalSeconds > 0 ? (slice.sliceSeconds / slice.totalSeconds) * 100 : 100
+                                const prod = products.find(p => p.code === slice.op.productCode)
+                                const prodText = prod ? `${prod.code} - ${prod.description}` : slice.op.productCode
+                                const opTitle = slice.op.opNumber.toLowerCase().startsWith("op") ? slice.op.opNumber : `OP ${slice.op.opNumber}`
+
                                 return (
                                   <div
                                     key={`${slice.op.id}-${slice.sliceDate}`}
                                     draggable={slice.isFirst}
                                     onDragStart={slice.isFirst ? (e) => handleDragStart(e, slice.op.id) : undefined}
                                     onDragEnd={slice.isFirst ? handleDragEnd : undefined}
-                                    className={`p-2 rounded-lg border shadow-sm flex flex-col gap-1 transition-all duration-150
+                                    title={`${opTitle} — ${prodText}`}
+                                    className={`p-2 rounded-lg border shadow-sm flex flex-col gap-1 transition-all duration-150 relative
                                       ${slice.isFirst ? "cursor-grab active:cursor-grabbing" : "cursor-default opacity-80"}
-                                      ${draggingId === slice.op.id ? "border-primary bg-primary/10 scale-[1.04] shadow-xl shadow-primary/20 z-10 relative" : "bg-card border-border hover:border-primary/50"}
+                                      ${draggingId === slice.op.id ? "border-primary bg-primary/10 scale-[1.04] shadow-xl shadow-primary/20 z-10" : "bg-card border-border hover:border-primary/50"}
                                     `}
                                   >
                                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary/30 rounded-l-lg" />
-                                    <div className="flex items-center justify-between gap-1 relative pl-1.5">
-                                      {slice.isFirst && <GripVertical className="h-2.5 w-2.5 text-muted-foreground/40 flex-shrink-0" />}
-                                      <span className="text-[10px] font-bold text-foreground truncate">{slice.op.opNumber}</span>
+                                    <div className="flex items-center justify-between gap-1 pl-1.5 min-w-0">
+                                      <div className="flex items-center gap-1 min-w-0 flex-1">
+                                        {slice.isFirst && <GripVertical className="h-2.5 w-2.5 text-muted-foreground/40 flex-shrink-0" />}
+                                        <span className="text-[11px] font-bold text-foreground truncate">{opTitle}</span>
+                                      </div>
                                       {slice.totalParts > 1 && (
                                         <span className="text-[8px] font-bold px-1 py-0.5 bg-amber-500/15 text-amber-600 rounded flex-shrink-0">
                                           {slice.partIndex}/{slice.totalParts}
                                         </span>
                                       )}
                                     </div>
-                                    <div className="flex justify-between items-center mt-0.5">
-                                      <span className="text-[9px] text-muted-foreground truncate">{slice.op.productCode}</span>
+                                    <div className="flex justify-between items-center mt-0.5 pl-1.5 min-w-0">
+                                      <span className="text-[10px] font-semibold text-primary truncate" title={prodText}>
+                                        {prodText}
+                                      </span>
                                     </div>
                                     <div className="flex flex-col gap-0.5 mt-1">
                                       {Object.entries(slice.machineLoads || {}).map(([mId, secs]) => {
@@ -1002,12 +1011,18 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
               const opTime = calculateOPTime(op)
               const slices = computeSlices.filter((s) => s.op.id === op.id)
               const multiDay = slices.length > 1
+              const prod = products.find(p => p.code === op.productCode)
+              const prodDesc = prod ? `${prod.code} - ${prod.description}` : op.productCode
+              const opTitle = op.opNumber.toLowerCase().startsWith("op") ? op.opNumber : `OP ${op.opNumber}`
+
               return (
                 <div key={op.id} className="p-3 bg-muted/10 border border-border hover:border-primary/50 rounded-xl flex items-center justify-between transition-all">
                   <div className="flex flex-col gap-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-bold text-foreground">{op.opNumber}</span>
-                      <span className="text-[10px] uppercase font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full">{op.productCode}</span>
+                      <span className="text-sm font-bold text-foreground">{opTitle}</span>
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[280px]" title={prodDesc}>
+                        {prodDesc}
+                      </span>
                       {multiDay && (
                         <span className="text-[9px] font-bold px-1.5 py-0.5 bg-amber-500/15 text-amber-600 rounded-full">
                           {slices.length} dias
