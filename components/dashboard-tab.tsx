@@ -56,10 +56,13 @@ interface SaldoEstoque {
   insumo: { codigo: string; descricao: string; estoque_minimo: number; unidade_medida: string }
 }
 
+import { isPausaProgramada } from "@/components/relatorios-tab"
+
 interface Pausa {
   apontamento_id: string
   inicio: string
   fim?: string
+  subgrupo?: { nome: string; grupo?: { nome: string } }
 }
 
 function formatNum(n: number, dec = 1) {
@@ -132,7 +135,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .select("insumo_id, saldo_atual, insumos(codigo, descricao, estoque_minimo, unidade_medida)")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamento_pausas")
-          .select("apontamento_id, inicio, fim")
+          .select("apontamento_id, inicio, fim, excecao_subgrupos(nome, excecao_grupos(nome))")
           .eq("empresa_id", empresaAtivaId)
           .gte("inicio", inicioISO),
         supabase.from("produtos")
@@ -143,7 +146,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .eq("empresa_id", empresaAtivaId)
           .eq("status", "em_andamento"),
         supabase.from("apontamento_pausas")
-          .select("apontamento_id, inicio, fim")
+          .select("apontamento_id, inicio, fim, excecao_subgrupos(nome, excecao_grupos(nome))")
           .eq("empresa_id", empresaAtivaId)
           .is("fim", null),
         supabase.from("operacoes")
@@ -219,6 +222,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
     const totalTempoPausa = pausas.reduce((s, p) => {
       if (!p.fim) return s
+      if (isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome)) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
 
