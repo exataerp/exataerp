@@ -103,6 +103,8 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
     return { dataInicio: toDateStr(inicio), dataFim: fim }
   }, [periodo])
 
+  const [operacoes, setOperacoes] = useState<{ id: string; maquina_id?: string }[]>([])
+
   const loadData = async (silent = false) => {
     if (!empresaAtivaId) return
     if (!silent) setLoading(true)
@@ -112,7 +114,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       const inicioISO = new Date(dataInicio + "T00:00:00").toISOString()
       const fimISO = new Date(dataFim + "T23:59:59").toISOString()
 
-      const [{ data: ops }, { data: aps }, { data: mqs }, { data: sal }, { data: pss }, { data: prods }, { data: apsAtivos }, { data: pssAbertas }] = await Promise.all([
+      const [{ data: ops }, { data: aps }, { data: mqs }, { data: sal }, { data: pss }, { data: prods }, { data: apsAtivos }, { data: pssAbertas }, { data: opsData }] = await Promise.all([
         supabase.from("ordens_producao")
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId)
@@ -135,8 +137,6 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
         supabase.from("produtos")
           .select("codigo, operacoes(id, ordem)")
           .eq("empresa_id", empresaAtivaId),
-        // Status "ao vivo" das máquinas não pode depender do período de relatório selecionado —
-        // uma OP iniciada antes do início do período e ainda em andamento continua sendo "em andamento".
         supabase.from("apontamentos")
           .select("id, maquina_id, status, created_at")
           .eq("empresa_id", empresaAtivaId)
@@ -145,6 +145,8 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .select("apontamento_id, inicio, fim")
           .eq("empresa_id", empresaAtivaId)
           .is("fim", null),
+        supabase.from("operacoes")
+          .select("id, maquina_id"),
       ])
 
       setOrdens((ops || []) as OrdemProducao[])
@@ -158,6 +160,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       setPausas((pss || []) as Pausa[])
       setApontamentosAtivos((apsAtivos || []) as Apontamento[])
       setPausasAbertas((pssAbertas || []) as Pausa[])
+      setOperacoes((opsData || []) as { id: string; maquina_id?: string }[])
 
       // Mapeia produto -> id da última operação do roteiro (a que realmente entrega a peça pronta)
       const mapaUltimaOp: Record<string, string> = {}
@@ -238,16 +241,18 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
   // ─── Produção por máquina ──────────────────────────────────────────────────
 
   const producaoPorMaquina = useMemo(() => {
+    const operacoesMap = new Map((operacoes || []).map(o => [o.id, o.maquina_id]))
     const mapa: Record<string, { nome: string; produzidas: number; refugo: number }> = {}
     for (const ap of apontamentos) {
-      const maq = maquinas.find(m => m.id === ap.maquina_id)
+      const mId = ap.maquina_id || (ap.operacao_id ? operacoesMap.get(ap.operacao_id) : null)
+      const maq = maquinas.find(m => m.id === mId)
       const nome = maq ? `${maq.codigo}` : "Manual"
       if (!mapa[nome]) mapa[nome] = { nome, produzidas: 0, refugo: 0 }
       mapa[nome].produzidas += ap.pecas_produzidas || 0
       mapa[nome].refugo += ap.pecas_refugo || 0
     }
     return Object.values(mapa).sort((a, b) => b.produzidas - a.produzidas).slice(0, 8)
-  }, [apontamentos, maquinas])
+  }, [apontamentos, maquinas, operacoes])
 
   // ─── OPs em andamento ─────────────────────────────────────────────────────
 
