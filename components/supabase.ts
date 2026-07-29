@@ -1,6 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+import { createClient } from "@/lib/supabase/client"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Usa o mesmo cliente baseado em cookies do AuthContext. Um segundo cliente
+// supabase-js isolado não enxergava a sessão criada no login.
+export const supabase = createClient()
