@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
+import { isPausaProgramada } from "@/components/relatorios-tab"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, Plus, Trash2, ClipboardList, TrendingUp,
@@ -138,6 +139,21 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
               </Select>
             </div>
           )}
+
+          {subgrupoId && (() => {
+            const sub = grupo?.subgrupos.find(s => s.id === subgrupoId)
+            const ehProgramada = isPausaProgramada(sub?.nome, grupo?.nome)
+            return (
+              <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${ehProgramada ? "bg-blue-500/10 border-blue-500/20 text-blue-600 font-medium" : "bg-amber-500/10 border-amber-500/20 text-amber-600 font-medium"}`}>
+                <Clock className="h-4 w-4 flex-shrink-0" />
+                <span>
+                  {ehProgramada
+                    ? "Intervalo Programado (Almoço/Fim de Turno) — Não penaliza o OEE"
+                    : "Parada Operacional Não Planejada — Registrada como tempo de máquina indisponível"}
+                </span>
+              </div>
+            )
+          })()}
         </div>
 
         <div className="flex gap-2 pt-1">
