@@ -748,16 +748,31 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       const apsUltimaEtapa = ultimaOperacaoId
         ? aps.filter(a => a.operacao_id === ultimaOperacaoId)
         : aps
-      const totalProduzidas = apsUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+      let totalProduzidas = apsUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+      
+      // Fallback: se a filtragem por última etapa resultar em 0 peças mas existem apontamentos com peças produzidas na OP,
+      // utiliza a soma geral dos apontamentos da OP para não zerar os indicadores de progresso.
+      if (totalProduzidas === 0 && aps.length > 0) {
+        const totalGeralAps = aps.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+        if (totalGeralAps > 0) {
+          totalProduzidas = totalGeralAps
+        }
+      }
+
       const totalRefugo = aps.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
       const totalRetrabalho = aps.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
       const totalSegundos = aps.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
-      const pct = op.quantidade > 0 ? Math.min(100, (totalProduzidas / op.quantidade) * 100) : 0
+      let pct = op.quantidade > 0 ? Math.min(100, (totalProduzidas / op.quantidade) * 100) : 0
       
       // Só o encerramento total tranca a OP. Parcial é um "salvamento de progresso":
       // registra o que já foi produzido, mas deixa a OP disponível pra continuar depois.
       const foiEncerradaManualmente = aps.some(a => a.encerramento === "encerrar")
-      const fechada = foiEncerradaManualmente || totalProduzidas >= op.quantidade
+      const fechada = foiEncerradaManualmente || op.status === "encerrada" || totalProduzidas >= op.quantidade
+
+      // Garantia de que OPs encerradas com peças produzidas reflitam seu percentual real de entrega
+      if (fechada && pct === 0 && op.quantidade > 0 && totalProduzidas > 0) {
+        pct = Math.min(100, (totalProduzidas / op.quantidade) * 100)
+      }
       
       return { op, aps, totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, pct, fechada }
     })
@@ -768,9 +783,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const opsFechadas = resumos.filter(r => r.fechada).length
     const totalProduzidas = apontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
     const totalRefugo = apontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const pctRefugo = totalProduzidas + totalRefugo > 0
-      ? ((totalRefugo / (totalProduzidas + totalRefugo)) * 100).toFixed(1) : "0.0"
-    return { totalOPs, opsFechadas, totalProduzidas, totalRefugo, pctRefugo }
+    const temBaseRefugo = totalProduzidas + totalRefugo > 0
+    const pctRefugo = temBaseRefugo
+      ? ((totalRefugo / (totalProduzidas + totalRefugo)) * 100).toFixed(1) : "N/A"
+    return { totalOPs, opsFechadas, totalProduzidas, totalRefugo, pctRefugo, temBaseRefugo }
   }, [resumos, apontamentos, ordens])
 
   const ordemAtual = ordens.find(o => o.id === ordemSelecionadaId)
@@ -934,7 +950,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           { label: "OPs na carteira", value: kpis.totalOPs, icon: ClipboardList, color: "text-primary" },
           { label: "OPs concluídas", value: kpis.opsFechadas, icon: CheckCircle2, color: "text-green-600" },
           { label: "Peças produzidas", value: kpis.totalProduzidas.toLocaleString("pt-BR"), icon: Package, color: "text-primary" },
-          { label: "Taxa de refugo", value: `${kpis.pctRefugo}%`, icon: AlertTriangle, color: Number(kpis.pctRefugo) > 5 ? "text-destructive" : "text-amber-500" },
+          { label: "Taxa de refugo", value: kpis.temBaseRefugo ? `${kpis.pctRefugo}%` : "N/A", icon: AlertTriangle, color: kpis.temBaseRefugo && Number(kpis.pctRefugo) > 5 ? "text-destructive" : "text-amber-500" },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 flex items-center gap-4 shadow-sm">
             <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-muted flex-shrink-0">
