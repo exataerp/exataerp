@@ -211,14 +211,14 @@ function PrimeiroAcessoInner() {
         throw new Error(error ?? 'Erro ao concluir primeiro acesso.')
       }
 
-      const { nivel, onboarding_completed } = await res.json()
+      const { is_system_manager, onboarding_completed } = await res.json()
 
       setEstado('sucesso')
 
       // 4. Redireciona
       setTimeout(() => {
-        if (['master', 'admin'].includes(nivel) && !onboarding_completed) {
-          window.location.href = '/?setup=true'
+        if (is_system_manager && !onboarding_completed) {
+          window.location.href = '/acessar-empresa'
         } else {
           window.location.href = '/'
         }

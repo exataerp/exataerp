@@ -8,6 +8,7 @@ const PUBLIC_ROUTES = [
 ]
 
 const ROTAS_RESTRITAS: Record<string, string[]> = {
+  '/acessar-empresa': ['system_manager'],
   '/setup':         ['system_manager'],
   '/configuracoes': ['system_manager'],
   '/usuarios':      ['system_manager'],
