@@ -443,16 +443,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       return
     }
 
-    // Busca tempo planejado da operação no banco para ter unidade correta
+    // Busca tempo planejado e máquina da operação no banco
     const { data: opDb } = await supabase
       .from("operacoes")
-      .select("tempo, unidade")
+      .select("tempo, unidade, maquina_id")
       .eq("id", operacaoSelecionadaId)
       .single()
 
     const cicloPlanejadoSeg = opDb
       ? (opDb.unidade === "minutes" ? opDb.tempo * 60 : opDb.tempo)
       : undefined
+
+    const maquinaIdDefinitiva = op.maquina_id || opDb?.maquina_id || null
 
     const { data, error } = await supabase
       .from("apontamentos")
@@ -461,7 +463,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         ordem_id: ordemSelecionadaId,
         operacao_id: operacaoSelecionadaId,
         operacao_nome: op.nome,
-        maquina_id: op.maquina_id || null,
+        maquina_id: maquinaIdDefinitiva,
         cronometro_inicio: new Date().toISOString(),
         cronometro_total_segundos: 0,
         pecas_produzidas: 0,
