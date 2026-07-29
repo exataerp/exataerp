@@ -28,6 +28,97 @@ interface BrasilApiCnpj {
   ddd_telefone_1?: string
 }
 
+interface OpenCnpjResponse {
+  success?: boolean
+  data?: {
+    cnpj?: string
+    razaoSocial?: string
+    nomeFantasia?: string
+    situacaoCadastral?: string
+    logradouro?: string
+    numero?: string
+    complemento?: string
+    bairro?: string
+    municipio?: string
+    uf?: string
+    cep?: string
+    cnaes?: Array<{ descricao?: string }>
+    email?: string
+    telefone?: string
+  }
+}
+
+interface ConsultaCnpj {
+  data: BrasilApiCnpj
+  fonte: string
+}
+
+async function consultarCnpjPublico(cnpj: string): Promise<ConsultaCnpj | null> {
+  try {
+    const response = await fetch(
+      `https://brasilapi.com.br/api/cnpj/v1/${encodeURIComponent(cnpj)}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "ExataERP/1.0",
+        },
+        signal: AbortSignal.timeout(12000),
+        cache: "no-store",
+      },
+    )
+
+    if (response.ok) {
+      return {
+        data: (await response.json()) as BrasilApiCnpj,
+        fonte: "BrasilAPI",
+      }
+    }
+  } catch {
+    // Consulta automaticamente a segunda fonte.
+  }
+
+  try {
+    const response = await fetch(
+      `https://kitana.opencnpj.com/cnpj/${encodeURIComponent(cnpj)}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "ExataERP/1.0",
+        },
+        signal: AbortSignal.timeout(12000),
+        cache: "no-store",
+      },
+    )
+
+    if (!response.ok) return null
+
+    const result = (await response.json()) as OpenCnpjResponse
+    if (!result.success || !result.data) return null
+
+    return {
+      fonte: "OpenCNPJ",
+      data: {
+        cnpj: result.data.cnpj,
+        razao_social: result.data.razaoSocial,
+        nome_fantasia: result.data.nomeFantasia,
+        descricao_situacao_cadastral: result.data.situacaoCadastral,
+        logradouro: result.data.logradouro,
+        numero: result.data.numero,
+        complemento: result.data.complemento,
+        bairro: result.data.bairro,
+        municipio: result.data.municipio,
+        uf: result.data.uf,
+        cep: result.data.cep,
+        cnae_fiscal_descricao: result.data.cnaes?.[0]?.descricao,
+        email: result.data.email,
+        ddd_telefone_1: result.data.telefone,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
 function formatarCep(value?: string) {
   const cep = value?.replace(/\D/g, "") ?? ""
   return cep.length === 8 ? `${cep.slice(0, 5)}-${cep.slice(5)}` : cep
@@ -79,38 +170,18 @@ export async function POST(request: Request) {
 
     await assertSystemManager(user.id, perfil.empresa_id)
 
-    let response: Response
-    try {
-      response = await fetch(
-        `https://brasilapi.com.br/api/cnpj/v1/${encodeURIComponent(cnpj)}`,
-        {
-          headers: { Accept: "application/json" },
-          signal: AbortSignal.timeout(12000),
-          next: { revalidate: 86400 },
-        },
-      )
-    } catch {
+    const consulta = await consultarCnpjPublico(cnpj)
+    if (!consulta) {
       return NextResponse.json(
-        { error: "A consulta de CNPJ está temporariamente indisponível. Tente novamente." },
+        {
+          error:
+            "As fontes públicas de CNPJ estão temporariamente indisponíveis. Tente novamente em instantes.",
+        },
         { status: 503 },
       )
     }
 
-    if (response.status === 404) {
-      return NextResponse.json(
-        { error: "CNPJ não encontrado na base pública da Receita Federal." },
-        { status: 404 },
-      )
-    }
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: "Não foi possível consultar o CNPJ agora. Tente novamente em instantes." },
-        { status: response.status === 429 ? 429 : 502 },
-      )
-    }
-
-    const data = (await response.json()) as BrasilApiCnpj
+    const { data, fonte } = consulta
     const razaoSocial = data.razao_social?.trim() ?? ""
     const nomeFantasia = data.nome_fantasia?.trim() ?? ""
     const nome = nomeFantasia || razaoSocial
@@ -158,7 +229,7 @@ export async function POST(request: Request) {
         ...empresaAtualizada,
         situacao_cadastral: data.descricao_situacao_cadastral?.trim() || null,
       },
-      fonte: "Dados públicos do CNPJ via BrasilAPI",
+      fonte: `Dados públicos do CNPJ via ${fonte}`,
     })
   } catch (error: any) {
     if (error instanceof AuthError) {
