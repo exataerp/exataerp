@@ -84,10 +84,10 @@ function formatarTempo(segundos: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
 }
 
-function badgeStatus(pct: number) {
-  if (pct >= 100) return { label: "Concluída", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
-  if (pct >= 50) return { label: "Em andamento", classes: "bg-primary/10 text-primary border border-primary/20" }
-  return { label: "Iniciada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
+function badgeStatus(pct: number, fechada?: boolean) {
+  if (fechada || pct >= 100) return { label: "Encerrada", classes: "bg-blue-500/10 text-blue-600 border border-blue-500/20" }
+  if (pct > 0) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
+  return { label: "Agendada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
 }
 
 // ─── Modal de Pausa ───────────────────────────────────────────────────────────
@@ -1165,7 +1165,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               )}
 
               {resumos.map(resumo => {
-                const badge = badgeStatus(resumo.pct)
+                const badge = badgeStatus(resumo.pct, resumo.fechada)
                 const expandida = opExpandida === resumo.op.id
 
                 return (
@@ -1182,7 +1182,6 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                             )
                           })()}
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.classes}`}>{badge.label}</span>
-                          {resumo.fechada && <span className="text-[10px] font-bold px-2 py-0.5 bg-green-500/10 text-green-600 rounded-full border border-green-500/20">Encerrada</span>}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
                           Meta: <strong className="text-foreground">{resumo.op.quantidade} peças</strong>
@@ -1197,7 +1196,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
                     <div className="mt-3 h-2 bg-muted rounded-full overflow-hidden relative">
                       <div
-                        className={`h-full rounded-full transition-all relative overflow-hidden ${resumo.fechada ? "bg-green-500" : "bg-primary"}`}
+                        className={`h-full rounded-full transition-all relative overflow-hidden ${resumo.fechada || resumo.pct >= 100 ? "bg-blue-500" : resumo.pct > 0 ? "bg-green-500" : "bg-amber-500"}`}
                         style={{ width: `${resumo.pct}%` }}
                       >
                         {!resumo.fechada && resumo.pct > 0 && <div className="progress-shimmer" />}
