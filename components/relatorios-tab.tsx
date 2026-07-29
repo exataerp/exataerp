@@ -127,22 +127,25 @@ export function RelatoriosTab({
 
   const { inicio, fim } = useMemo(() => {
     const hoje = new Date()
-    const fim = hoje.toISOString()
+    const fimObj = new Date(hoje)
+    fimObj.setHours(23, 59, 59, 999)
+    const fim = fimObj.toISOString()
+
     if (periodo === "7d") {
-      const d = new Date(hoje); d.setDate(d.getDate() - 7)
+      const d = new Date(hoje); d.setDate(d.getDate() - 7); d.setHours(0, 0, 0, 0)
       return { inicio: d.toISOString(), fim }
     }
     if (periodo === "30d") {
-      const d = new Date(hoje); d.setDate(d.getDate() - 30)
+      const d = new Date(hoje); d.setDate(d.getDate() - 30); d.setHours(0, 0, 0, 0)
       return { inicio: d.toISOString(), fim }
     }
     if (periodo === "90d") {
-      const d = new Date(hoje); d.setDate(d.getDate() - 90)
+      const d = new Date(hoje); d.setDate(d.getDate() - 90); d.setHours(0, 0, 0, 0)
       return { inicio: d.toISOString(), fim }
     }
     return {
-      inicio: dataInicio ? new Date(dataInicio).toISOString() : new Date(hoje.setDate(hoje.getDate() - 30)).toISOString(),
-      fim: dataFim ? new Date(dataFim + "T23:59:59").toISOString() : new Date().toISOString(),
+      inicio: dataInicio ? new Date(dataInicio + "T00:00:00").toISOString() : new Date(hoje.setDate(hoje.getDate() - 30)).toISOString(),
+      fim: dataFim ? new Date(dataFim + "T23:59:59.999").toISOString() : fim,
     }
   }, [periodo, dataInicio, dataFim])
 
@@ -262,7 +265,7 @@ export function RelatoriosTab({
         avisos,
         dadosCompletos: avisos.length === 0,
       }
-    }).filter(d => d.tempoRodando > 0)
+    }).filter(d => d.tempoRodando > 0 || d.totalProduzidas > 0)
   }, [maquinas, apontamentos, pausas, operacoes, inicio, fim])
 
   // ─── Taxa de refugo por produto ───────────────────────────────────────────
@@ -381,9 +384,11 @@ export function RelatoriosTab({
       if (!p.fim) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
-    const taxaRefugo = totalProduzidas > 0 ? (totalRefugo / totalProduzidas) * 100 : 0
-    const oeeGeral = dadosOEE.length > 0 ? dadosOEE.reduce((s, d) => s + d.oee, 0) / dadosOEE.length : 0
-    return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, taxaRefugo, oeeGeral }
+    const temBaseRefugo = totalProduzidas + totalRefugo > 0
+    const temBaseOEE = dadosOEE.length > 0
+    const taxaRefugo = temBaseRefugo ? (totalRefugo / (totalProduzidas + totalRefugo)) * 100 : 0
+    const oeeGeral = temBaseOEE ? dadosOEE.reduce((s, d) => s + d.oee, 0) / dadosOEE.length : 0
+    return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, temBaseRefugo, temBaseOEE, taxaRefugo, oeeGeral }
   }, [apontamentos, pausas, dadosOEE])
 
   if (loading) {
@@ -448,10 +453,10 @@ export function RelatoriosTab({
       {/* KPIs gerais */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "OEE médio geral", value: kpis.oeeGeral, decimals: 1, suffix: "%", icon: BarChart3, color: kpis.oeeGeral >= 85 ? "text-green-600" : kpis.oeeGeral >= 60 ? "text-amber-500" : "text-destructive" },
-          { label: "Peças produzidas", value: kpis.totalProduzidas, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
-          { label: "Taxa de refugo", value: kpis.taxaRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: kpis.taxaRefugo > 5 ? "text-destructive" : "text-green-600" },
-        ].map(({ label, value, decimals, suffix, icon: Icon, color }) => (
+          { label: "OEE médio geral", value: kpis.oeeGeral, hasBase: kpis.temBaseOEE, decimals: 1, suffix: "%", icon: BarChart3, color: !kpis.temBaseOEE ? "text-muted-foreground" : kpis.oeeGeral >= 85 ? "text-green-600" : kpis.oeeGeral >= 60 ? "text-amber-500" : "text-destructive" },
+          { label: "Peças produzidas", value: kpis.totalProduzidas, hasBase: true, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
+          { label: "Taxa de refugo", value: kpis.taxaRefugo, hasBase: kpis.temBaseRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: !kpis.temBaseRefugo ? "text-muted-foreground" : kpis.taxaRefugo > 5 ? "text-destructive" : "text-green-600" },
+        ].map(({ label, value, hasBase, decimals, suffix, icon: Icon, color }) => (
           <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 flex items-center gap-3 shadow-sm">
             <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-muted flex-shrink-0">
               <Icon className={`h-5 w-5 ${color}`} />
@@ -459,7 +464,7 @@ export function RelatoriosTab({
             <div className="min-w-0">
               <p className="text-[10px] text-muted-foreground font-medium leading-tight">{label}</p>
               <p className="text-lg font-bold text-foreground mt-0.5">
-                <CountUp value={value} decimals={decimals} suffix={suffix} />
+                {hasBase ? <CountUp value={value} decimals={decimals} suffix={suffix} /> : "N/A"}
               </p>
             </div>
           </div>
