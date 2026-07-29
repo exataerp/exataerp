@@ -542,7 +542,8 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                   Programada: {op.data_programacao.split("-").reverse().join("/")}
                 </p>
               </div>
-            ))}
+            )
+          })}
           </div>
         </div>
       </div>
