@@ -82,6 +82,7 @@ function PrimeiroAcessoInner() {
       const hash = window.location.hash
       const params = new URLSearchParams(hash.slice(1))
       const accessTk = params.get('access_token')
+      const refreshTk = params.get('refresh_token')
       const errDesc = params.get('error_description')
 
       if (errDesc?.includes('expired')) {
@@ -90,24 +91,34 @@ function PrimeiroAcessoInner() {
         return
       }
 
-      if (accessTk) {
-        setAccessToken(accessTk)
-        // Obtém dados do usuário do token
-        supabase.auth.getUser(accessTk).then(({ data }) => {
-          if (data.user) {
-            setEmailConvite(data.user.email ?? '')
-            setNomeConvite(data.user.user_metadata?.name ?? '')
-            setNome(data.user.user_metadata?.name ?? '')
-            if (data.user.user_metadata?.first_access_completed) {
-              setEstado('ja_usado')
-            } else {
-              setEstado('formulario')
-            }
-          } else {
+      if (accessTk && refreshTk) {
+        // Links do fluxo implícito entregam os dois tokens no hash. É preciso
+        // restaurar a sessão no cliente antes de chamar updateUser.
+        supabase.auth.setSession({
+          access_token: accessTk,
+          refresh_token: refreshTk,
+        }).then(({ data, error }) => {
+          const user = data.session?.user
+
+          if (error || !data.session || !user) {
             setEstado('erro_convite')
-            setErroMsg('Link inválido ou expirado.')
+            setErroMsg('Não foi possível iniciar sua sessão. Solicite um novo convite.')
+            return
+          }
+
+          setAccessToken(data.session.access_token)
+          setEmailConvite(user.email ?? '')
+          setNomeConvite(user.user_metadata?.name ?? '')
+          setNome(user.user_metadata?.name ?? '')
+          if (user.user_metadata?.first_access_completed) {
+            setEstado('ja_usado')
+          } else {
+            setEstado('formulario')
           }
         })
+      } else if (accessTk) {
+        setEstado('erro_convite')
+        setErroMsg('O link não contém uma sessão completa. Solicite um novo convite.')
       } else {
         setEstado('erro_convite')
         setErroMsg('Link de acesso não encontrado. Verifique o e-mail de convite.')
@@ -172,6 +183,11 @@ function PrimeiroAcessoInner() {
     setEstado('concluindo')
 
     try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      if (!currentSession) {
+        throw new Error('Sua sessão não foi iniciada. Abra novamente o link mais recente enviado por e-mail.')
+      }
+
       // 1. Define senha no Supabase Auth
       const { error: updateErr } = await supabase.auth.updateUser({ password: senha })
       if (updateErr) throw new Error(updateErr.message)
