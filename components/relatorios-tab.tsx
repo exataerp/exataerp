@@ -152,12 +152,14 @@ export function RelatoriosTab({
     }
   }, [periodo, dataInicio, dataFim])
 
+  const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
+
   // ─── Carga ────────────────────────────────────────────────────────────────
 
   const loadData = async () => {
     setLoading(true)
     try {
-      const [{ data: ap }, { data: ps }, { data: op }, { data: mq }, { data: oc }, { data: mv }] = await Promise.all([
+      const [{ data: ap }, { data: ps }, { data: op }, { data: mq }, { data: oc }, { data: mv }, { data: prods }] = await Promise.all([
         supabase.from("apontamentos")
           .select("id, ordem_id, operacao_id, operacao_nome, maquina_id, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, created_at")
           .eq("empresa_id", empresaAtivaId!)
@@ -183,6 +185,9 @@ export function RelatoriosTab({
           .in("tipo", ["saida_producao", "entrada_producao", "refugo"])
           .gte("created_at", inicio)
           .lte("created_at", fim),
+        supabase.from("produtos")
+          .select("codigo, descricao")
+          .eq("empresa_id", empresaAtivaId!),
       ])
 
       setApontamentos((ap || []) as Apontamento[])
@@ -201,6 +206,12 @@ export function RelatoriosTab({
       setMaquinas((mq || []) as Maquina[])
       setOperacoes((oc || []) as Operacao[])
       setMovimentacoes(mv || [])
+
+      const mapaDesc: Record<string, string> = {}
+      for (const p of (prods || []) as any[]) {
+        if (p.descricao) mapaDesc[p.codigo] = p.descricao
+      }
+      setMapaDescricaoProdutos(mapaDesc)
     } finally {
       setLoading(false)
     }
@@ -299,18 +310,21 @@ export function RelatoriosTab({
   // ─── Taxa de refugo por produto ───────────────────────────────────────────
 
   const dadosRefugo = useMemo(() => {
-    const mapa: Record<string, { produzidas: number; refugo: number; retrabalho: number }> = {}
+    const mapa: Record<string, { produtoRotulo: string; produzidas: number; refugo: number; retrabalho: number }> = {}
     for (const ap of filteredApontamentos) {
       const op = ordens.find(o => o.id === ap.ordem_id)
       const codigo = op?.produto_codigo ?? "Desconhecido"
-      if (!mapa[codigo]) mapa[codigo] = { produzidas: 0, refugo: 0, retrabalho: 0 }
+      const desc = mapaDescricaoProdutos[codigo]
+      const produtoRotulo = desc ? `${codigo} - ${desc}` : codigo
+
+      if (!mapa[codigo]) mapa[codigo] = { produtoRotulo, produzidas: 0, refugo: 0, retrabalho: 0 }
       mapa[codigo].produzidas += ap.pecas_produzidas || 0
       mapa[codigo].refugo += ap.pecas_refugo || 0
       mapa[codigo].retrabalho += ap.pecas_retrabalho || 0
     }
     return Object.entries(mapa)
-      .map(([produto, d]) => ({
-        produto,
+      .map(([codigo, d]) => ({
+        produto: d.produtoRotulo,
         produzidas: d.produzidas,
         refugo: d.refugo,
         retrabalho: d.retrabalho,
@@ -318,7 +332,7 @@ export function RelatoriosTab({
         taxaRetrabalho: d.produzidas > 0 ? parseFloat(((d.retrabalho / d.produzidas) * 100).toFixed(1)) : 0,
       }))
       .sort((a, b) => b.taxaRefugo - a.taxaRefugo)
-  }, [filteredApontamentos, ordens])
+  }, [filteredApontamentos, ordens, mapaDescricaoProdutos])
 
   // ─── Ciclo real vs planejado ──────────────────────────────────────────────
 
@@ -489,14 +503,19 @@ export function RelatoriosTab({
 
           {/* Filtro OP */}
           <Select value={selectedOpId} onValueChange={setSelectedOpId}>
-            <SelectTrigger className="w-44 h-9 text-xs rounded-xl border border-border bg-input text-foreground outline-none focus:ring-2 focus:ring-primary transition-all">
+            <SelectTrigger className="w-48 h-9 text-xs rounded-xl border border-border bg-input text-foreground outline-none focus:ring-2 focus:ring-primary transition-all">
               <SelectValue placeholder="Todas as OPs" />
             </SelectTrigger>
             <SelectContent className="bg-card border-border max-h-56">
               <SelectItem value="all">Todas as OPs</SelectItem>
-              {ordens.map(o => (
-                <SelectItem key={o.id} value={o.id}>OP {o.numero_op} ({o.produto_codigo})</SelectItem>
-              ))}
+              {ordens.map(o => {
+                const desc = mapaDescricaoProdutos[o.produto_codigo]
+                const prodText = desc ? `${o.produto_codigo} - ${desc}` : o.produto_codigo
+                const opTitle = o.numero_op.toLowerCase().startsWith("op") ? o.numero_op : `OP ${o.numero_op}`
+                return (
+                  <SelectItem key={o.id} value={o.id}>{opTitle} ({prodText})</SelectItem>
+                )
+              })}
             </SelectContent>
           </Select>
 
