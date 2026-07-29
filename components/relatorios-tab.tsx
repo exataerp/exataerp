@@ -307,8 +307,14 @@ export function RelatoriosTab({
     }).filter(d => d.tempoRodando > 0 || d.totalProduzidas > 0)
   }, [maquinas, filteredApontamentos, pausas, operacoes, inicio, fim, selectedMaquinaId])
 
-  // ─── Taxa de refugo por produto ───────────────────────────────────────────
-
+  /**
+   * ─── Taxa de refugo por produto ───────────────────────────────────────────
+   * Regra de Negócio:
+   * - Produção Bruta: soma de pecas_produzidas apontadas.
+   * - Refugo: soma de pecas_refugo.
+   * - Retrabalho: soma de pecas_retrabalho.
+   * - Taxa de Refugo (%): (Refugo / Produção Bruta) * 100 se Produção Bruta > 0.
+   */
   const dadosRefugo = useMemo(() => {
     const mapa: Record<string, { produtoRotulo: string; produzidas: number; refugo: number; retrabalho: number }> = {}
     for (const ap of filteredApontamentos) {
@@ -334,35 +340,48 @@ export function RelatoriosTab({
       .sort((a, b) => b.taxaRefugo - a.taxaRefugo)
   }, [filteredApontamentos, ordens, mapaDescricaoProdutos])
 
-  // ─── Ciclo real vs planejado ──────────────────────────────────────────────
-
+  /**
+   * ─── Ciclo real vs planejado ──────────────────────────────────────────────
+   * Regra de Negócio:
+   * - Tempo Planejado: ciclo padrão definido no roteiro (operacoes.tempo) em minutos/segundos.
+   * - Tempo Real: Média PONDERADA por peça = Soma(Cronômetro Total em Segundos) / Soma(Peças Produzidas).
+   * - Desvio (%): ((Ciclo Real Ponderado em Segundos - Ciclo Planejado em Segundos) / Ciclo Planejado em Segundos) * 100.
+   */
   const dadosCiclo = useMemo(() => {
-    const mapa: Record<string, { nome: string; totalSeg: number; count: number; planejadoSeg: number }> = {}
+    const mapa: Record<string, { nome: string; totalCronometroSeg: number; totalPecas: number; planejadoSeg: number }> = {}
     for (const ap of filteredApontamentos) {
       if (!ap.operacao_nome || !ap.cronometro_total_segundos || !ap.pecas_produzidas) continue
       const key = ap.operacao_nome
       if (!mapa[key]) {
         const op = operacoes.find(o => o.nome === ap.operacao_nome)
         const planejado = op ? (op.unidade === "minutes" ? op.tempo * 60 : op.tempo) : 0
-        mapa[key] = { nome: key, totalSeg: 0, count: 0, planejadoSeg: planejado }
+        mapa[key] = { nome: key, totalCronometroSeg: 0, totalPecas: 0, planejadoSeg: planejado }
       }
-      const cicloReal = ap.pecas_produzidas > 0 ? ap.cronometro_total_segundos / ap.pecas_produzidas : 0
-      mapa[key].totalSeg += cicloReal
-      mapa[key].count += 1
+      mapa[key].totalCronometroSeg += ap.cronometro_total_segundos || 0
+      mapa[key].totalPecas += ap.pecas_produzidas || 0
     }
     return Object.values(mapa)
-      .map(d => ({
-        operacao: d.nome.length > 16 ? d.nome.slice(0, 16) + "…" : d.nome,
-        nomeCompleto: d.nome,
-        realSeg: d.count > 0 ? parseFloat((d.totalSeg / d.count).toFixed(1)) : 0,
-        planejadoSeg: parseFloat(d.planejadoSeg.toFixed(1)),
-        real: d.count > 0 ? parseFloat(((d.totalSeg / d.count) / 60).toFixed(2)) : 0,
-        planejado: parseFloat((d.planejadoSeg / 60).toFixed(2)),
-        semPadrao: d.planejadoSeg === 0,
-        desvio: d.planejadoSeg > 0 && d.count > 0
-          ? parseFloat((((d.totalSeg / d.count) - d.planejadoSeg) / d.planejadoSeg * 100).toFixed(1))
-          : 0,
-      }))
+      .map(d => {
+        const realSeg = d.totalPecas > 0 ? d.totalCronometroSeg / d.totalPecas : 0
+        const realMin = realSeg / 60
+        const planejadoMin = d.planejadoSeg / 60
+        const desvio = d.planejadoSeg > 0 && d.totalPecas > 0
+          ? ((realSeg - d.planejadoSeg) / d.planejadoSeg) * 100
+          : 0
+
+        return {
+          operacao: d.nome.length > 16 ? d.nome.slice(0, 16) + "…" : d.nome,
+          nomeCompleto: d.nome,
+          totalCronometroSeg: d.totalCronometroSeg,
+          totalPecas: d.totalPecas,
+          realSeg: parseFloat(realSeg.toFixed(1)),
+          planejadoSeg: parseFloat(d.planejadoSeg.toFixed(1)),
+          real: parseFloat(realMin.toFixed(2)),
+          planejado: parseFloat(planejadoMin.toFixed(2)),
+          semPadrao: d.planejadoSeg === 0,
+          desvio: parseFloat(desvio.toFixed(1)),
+        }
+      })
       .filter(d => d.real > 0)
       .sort((a, b) => Math.abs(b.desvio) - Math.abs(a.desvio))
       .slice(0, 10)
@@ -691,6 +710,34 @@ export function RelatoriosTab({
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
+                      <td className="px-4 py-3 text-muted-foreground uppercase tracking-wider">Total Consolidado</td>
+                      <td className="px-4 py-3 text-foreground">{dadosRefugo.reduce((s, d) => s + d.produzidas, 0)}</td>
+                      <td className="px-4 py-3 text-destructive">{dadosRefugo.reduce((s, d) => s + d.refugo, 0)}</td>
+                      <td className="px-4 py-3 text-amber-500">{dadosRefugo.reduce((s, d) => s + d.retrabalho, 0)}</td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const totProd = dadosRefugo.reduce((s, d) => s + d.produzidas, 0)
+                          const totRef = dadosRefugo.reduce((s, d) => s + d.refugo, 0)
+                          const taxa = totProd > 0 ? (totRef / totProd) * 100 : 0
+                          return (
+                            <span className={taxa > 5 ? "text-destructive" : taxa > 2 ? "text-amber-500" : "text-green-600"}>
+                              {formatNum(taxa)}%
+                            </span>
+                          )
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 text-amber-500">
+                        {(() => {
+                          const totProd = dadosRefugo.reduce((s, d) => s + d.produzidas, 0)
+                          const totRet = dadosRefugo.reduce((s, d) => s + d.retrabalho, 0)
+                          const taxa = totProd > 0 ? (totRet / totProd) * 100 : 0
+                          return `${formatNum(taxa)}%`
+                        })()}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </>
@@ -727,7 +774,7 @@ export function RelatoriosTab({
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="planejado" name="Planejado" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} unit="min" />
-                    <Bar dataKey="real" name="Real" radius={[4, 4, 0, 0]} unit="min">
+                    <Bar dataKey="real" name="Real (média)" fill="#3b82f6" radius={[4, 4, 0, 0]} unit="min">
                       {dadosCiclo.map((d, i) => (
                         <Cell key={i} fill={d.desvio > 20 ? "#ef4444" : d.desvio > 0 ? "#f59e0b" : "#22c55e"} />
                       ))}
@@ -740,7 +787,7 @@ export function RelatoriosTab({
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      {["Operação", "Planejado", "Real (média)", "Desvio"].map(h => (
+                      {["Operação", "Planejado", "Real (média ponderada)", "Desvio"].map(h => (
                         <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">{h}</th>
                       ))}
                     </tr>
@@ -761,6 +808,41 @@ export function RelatoriosTab({
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
+                      <td className="px-4 py-3 text-muted-foreground uppercase tracking-wider">Média Ponderada Geral</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {(() => {
+                          const comPlan = dadosCiclo.filter(d => d.planejado > 0)
+                          const medPlan = comPlan.length > 0 ? comPlan.reduce((s, d) => s + d.planejado, 0) / comPlan.length : 0
+                          return medPlan > 0 ? `${formatNum(medPlan, 2)} min` : "—"
+                        })()}
+                      </td>
+                      <td className="px-4 py-3 text-foreground">
+                        {(() => {
+                          const totSeg = dadosCiclo.reduce((s, d) => s + d.totalCronometroSeg, 0)
+                          const totPec = dadosCiclo.reduce((s, d) => s + d.totalPecas, 0)
+                          const medRealSeg = totPec > 0 ? totSeg / totPec : 0
+                          return `${formatNum(medRealSeg / 60, 2)} min`
+                        })()}
+                      </td>
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const comPlan = dadosCiclo.filter(d => d.planejado > 0)
+                          const medPlan = comPlan.length > 0 ? comPlan.reduce((s, d) => s + d.planejadoSeg, 0) / comPlan.length : 0
+                          const totSeg = comPlan.reduce((s, d) => s + d.totalCronometroSeg, 0)
+                          const totPec = comPlan.reduce((s, d) => s + d.totalPecas, 0)
+                          const medRealSeg = totPec > 0 ? totSeg / totPec : 0
+                          const desvioGeral = medPlan > 0 && totPec > 0 ? ((medRealSeg - medPlan) / medPlan) * 100 : 0
+                          return medPlan > 0 ? (
+                            <span className={desvioGeral > 20 ? "text-destructive" : desvioGeral > 0 ? "text-amber-500" : "text-green-600"}>
+                              {desvioGeral > 0 ? "+" : ""}{formatNum(desvioGeral)}%
+                            </span>
+                          ) : "—"
+                        })()}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </>
