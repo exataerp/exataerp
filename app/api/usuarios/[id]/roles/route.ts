@@ -77,7 +77,7 @@ export async function POST(
       .single()
 
     if (roleErr || !role) {
-      return NextResponse.json({ error: `Role '${role_name}' não encontrado.` }, { status: 404 })
+      return NextResponse.json({ error: `Perfil de acesso '${role_name}' não encontrado.` }, { status: 404 })
     }
 
     // Garante que o usuário alvo pertence à mesma empresa
@@ -107,7 +107,7 @@ export async function POST(
     if (insertErr) {
       if (insertErr.code === '23505') {
         return NextResponse.json(
-          { error: 'Este usuário já possui este role.' },
+          { error: 'Este usuário já possui este perfil de acesso.' },
           { status: 409 }
         )
       }
@@ -146,7 +146,7 @@ export async function DELETE(
     // Impede remover o próprio system_manager (ficaria sem acesso)
     if (id === caller.id && role_name === 'system_manager') {
       return NextResponse.json(
-        { error: 'Você não pode remover seu próprio role de System Manager.' },
+        { error: 'Você não pode remover seu próprio perfil de Administrador do Sistema.' },
         { status: 400 }
       )
     }
@@ -158,7 +158,7 @@ export async function DELETE(
       .single()
 
     if (!role) {
-      return NextResponse.json({ error: `Role '${role_name}' não encontrado.` }, { status: 404 })
+      return NextResponse.json({ error: `Perfil de acesso '${role_name}' não encontrado.` }, { status: 404 })
     }
 
     const { error: deleteErr } = await supabaseAdmin

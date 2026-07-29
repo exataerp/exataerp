@@ -63,7 +63,7 @@ export async function getUserRoles(userId: string, empresaId: string): Promise<s
 export async function assertSystemManager(userId: string, empresaId: string) {
   const roles = await getUserRoles(userId, empresaId)
   if (!roles.includes('system_manager')) {
-    throw new AuthError('Acesso negado. System Manager necessário.', 403)
+    throw new AuthError('Acesso negado. É necessário ser Administrador do Sistema.', 403)
   }
 }
 

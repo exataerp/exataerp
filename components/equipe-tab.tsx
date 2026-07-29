@@ -110,7 +110,7 @@ export function EquipeTab() {
       return
     }
     if (rolesSelecionados.length === 0) {
-      setErroConvite('Selecione pelo menos um role.')
+      setErroConvite('Selecione pelo menos um perfil de acesso.')
       return
     }
 
@@ -272,7 +272,7 @@ export function EquipeTab() {
             {/* Seleção de roles */}
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                Roles
+                Perfis de acesso
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {rolesDisponiveis.map(role => {
@@ -302,7 +302,7 @@ export function EquipeTab() {
               </div>
               {rolesSelecionados.length > 0 && (
                 <p className="text-[10px] text-muted-foreground">
-                  {rolesSelecionados.length} role{rolesSelecionados.length > 1 ? 's' : ''} selecionado{rolesSelecionados.length > 1 ? 's' : ''}
+                  {rolesSelecionados.length} {rolesSelecionados.length === 1 ? 'perfil selecionado' : 'perfis selecionados'}
                 </p>
               )}
             </div>
@@ -382,12 +382,12 @@ export function EquipeTab() {
                 {expandido === membro.id && (
                   <div className="mt-4 pt-4 border-t border-border space-y-3 animate-in slide-in-from-top-1 duration-150">
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                      Roles — clique para adicionar ou remover
+                      Perfis de acesso — clique para adicionar ou remover
                     </p>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                       {rolesDisponiveis.map(role => {
                         const ativo = membro.roles.some(r => r.role_name === role.name)
-                        // Impede que o System Manager remova a si mesmo
+                        // Impede que o Administrador do Sistema remova a si mesmo
                         const bloqueado =
                           membro.user_id === supabaseUser?.id &&
                           role.name === 'system_manager'
@@ -397,7 +397,7 @@ export function EquipeTab() {
                             key={role.id}
                             onClick={() => !bloqueado && toggleRole(membro, role.name)}
                             disabled={bloqueado}
-                            title={bloqueado ? 'Você não pode remover seu próprio System Manager' : role.description}
+                            title={bloqueado ? 'Você não pode remover seu próprio perfil de Administrador do Sistema' : role.description}
                             className={[
                               'flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition-all',
                               ativo

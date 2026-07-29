@@ -143,13 +143,13 @@ export function isSystemManager(userRoles: RoleName[]): boolean {
 // Labels de exibição para a UI de gerenciamento de equipe
 // ------------------------------------------------------------
 export const ROLE_LABELS: Record<RoleName, { display: string; description: string }> = {
-  system_manager:      { display: 'System Manager',       description: 'Acesso total ao sistema' },
-  production_manager:  { display: 'Production Manager',   description: 'Gerencia produção, PCP e relatórios' },
-  production_user:     { display: 'Production User',      description: 'Apontamento e visualização do PCP' },
-  maintenance_manager: { display: 'Maintenance Manager',  description: 'Gestão completa de manutenção' },
-  maintenance_user:    { display: 'Maintenance User',     description: 'Registro de ordens de serviço' },
-  stock_manager:       { display: 'Stock Manager',        description: 'Gestão completa de estoque e BOM' },
-  stock_user:          { display: 'Stock User',           description: 'Movimentações de estoque' },
-  quality_manager:     { display: 'Quality Manager',      description: 'Exceções e relatórios de qualidade' },
-  viewer:              { display: 'Viewer',               description: 'Somente leitura' },
+  system_manager:      { display: 'Administrador do Sistema', description: 'Acesso total ao sistema' },
+  production_manager:  { display: 'Gestor de Produção',      description: 'Gerencia produção, PCP e relatórios' },
+  production_user:     { display: 'Usuário de Produção',     description: 'Apontamento e visualização do PCP' },
+  maintenance_manager: { display: 'Gestor de Manutenção',    description: 'Gestão completa de manutenção' },
+  maintenance_user:    { display: 'Usuário de Manutenção',   description: 'Registro de ordens de serviço' },
+  stock_manager:       { display: 'Gestor de Estoque',        description: 'Gestão completa de estoque e lista de materiais' },
+  stock_user:          { display: 'Usuário de Estoque',      description: 'Movimentações de estoque' },
+  quality_manager:     { display: 'Gestor da Qualidade',      description: 'Exceções e relatórios de qualidade' },
+  viewer:              { display: 'Visualizador',             description: 'Somente leitura' },
 }
