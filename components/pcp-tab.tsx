@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   Plus, Trash2, Calendar, ShieldAlert, TrendingUp,
   Columns3, CalendarDays, ListOrdered, GripVertical,
-  ChevronLeft, ChevronRight, ChevronDown, AlertTriangle, Factory
+  ChevronLeft, ChevronRight, ChevronDown, AlertTriangle, Factory, Check
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/components/supabase"
@@ -18,6 +18,14 @@ import { DatePicker } from "@/components/date-picker"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const DEFAULT_SHIFT_CAPACITY_SECONDS = 29880
+
+function normalizeText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+}
 const DIAS_SEMANA = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]
 
 interface SupabaseMaquina {
@@ -202,6 +210,24 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   }, [opNumber, orders, products])
   const [opDate, setOpDate] = useState("")
   const [opProductCode, setOpProductCode] = useState("")
+  const [productSearchTerm, setProductSearchTerm] = useState("")
+  const [showProductDropdown, setShowProductDropdown] = useState(false)
+
+  const filteredProducts = useMemo(() => {
+    const q = normalizeText(productSearchTerm)
+    if (!q) return products
+    return products.filter(p => {
+      const codeNorm = normalizeText(p.code)
+      const descNorm = normalizeText(p.description || "")
+      const combinedNorm = normalizeText(`${p.code} - ${p.description || ""}`)
+      return codeNorm.includes(q) || descNorm.includes(q) || combinedNorm.includes(q)
+    })
+  }, [products, productSearchTerm])
+
+  const selectedProduct = useMemo(() => {
+    return products.find(p => p.code === opProductCode)
+  }, [products, opProductCode])
+
   const [opQuantity, setOpQuantity] = useState("")
   const [opRule, setOpRule] = useState<"soma" | "media" | "gargalo">("soma")
   const [opGroupSetup, setOpGroupSetup] = useState(false)
@@ -600,15 +626,51 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
               <Label className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Data de Início</Label>
               <DatePicker value={opDate} onChange={setOpDate} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 relative">
               <Label className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Produto / Roteiro</Label>
-              <Select value={opProductCode} onValueChange={setOpProductCode}>
-                <SelectTrigger className="bg-input border-border h-10"><SelectValue placeholder="Selecione o Roteiro" /></SelectTrigger>
-                <SelectContent className="bg-card border-border">
-                  {products.map((p) => <SelectItem key={p.code} value={p.code}>{p.code} - {p.description}</SelectItem>)}
-                  {products.length === 0 && <SelectItem value="none" disabled>Nenhum roteiro salvo</SelectItem>}
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <Input
+                  placeholder="Selecione ou busque por código ou nome..."
+                  value={showProductDropdown ? productSearchTerm : (selectedProduct ? `${selectedProduct.code} - ${selectedProduct.description}` : "")}
+                  onChange={(e) => {
+                    setProductSearchTerm(e.target.value)
+                    if (!showProductDropdown) setShowProductDropdown(true)
+                  }}
+                  onFocus={() => {
+                    setProductSearchTerm("")
+                    setShowProductDropdown(true)
+                  }}
+                  onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
+                  className="bg-input border-border h-10 pr-8 text-xs font-medium"
+                />
+                <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-2.5 top-3 pointer-events-none" />
+              </div>
+              {showProductDropdown && (
+                <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-lg max-h-56 overflow-y-auto">
+                  {filteredProducts.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-muted-foreground text-center font-medium">
+                      {products.length === 0 ? "Nenhum roteiro salvo" : `Nenhum roteiro encontrado para "${productSearchTerm}"`}
+                    </div>
+                  ) : (
+                    filteredProducts.map((p) => (
+                      <button
+                        key={p.code}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setOpProductCode(p.code)
+                          setProductSearchTerm("")
+                          setShowProductDropdown(false)
+                        }}
+                        className={`w-full text-left px-3 py-2.5 hover:bg-muted/60 transition-colors flex items-center justify-between text-xs gap-2 ${opProductCode === p.code ? "bg-primary/10 font-bold text-primary" : "text-foreground"}`}
+                      >
+                        <span className="font-semibold">{p.code} - {p.description}</span>
+                        {opProductCode === p.code && <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Quantidade Solicitada</Label>
