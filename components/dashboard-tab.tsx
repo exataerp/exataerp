@@ -190,10 +190,13 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
   // ─── KPIs ──────────────────────────────────────────────────────────────────
 
+  // ─── KPIs ──────────────────────────────────────────────────────────────────
+
   const kpis = useMemo(() => {
     const totalProduzidas = apontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
     const totalRefugo = apontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const taxaRefugo = totalProduzidas + totalRefugo > 0
+    const temBaseRefugo = totalProduzidas + totalRefugo > 0
+    const taxaRefugo = temBaseRefugo
       ? (totalRefugo / (totalProduzidas + totalRefugo)) * 100 : 0
 
     const opsAbertas = ordens.filter(o => o.status !== "encerrada").length
@@ -212,7 +215,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
 
-    return { totalProduzidas, totalRefugo, taxaRefugo, opsAbertas, opsConcluidas, opsAtrasadas, maqAtivas, estoquesCriticos, estoquesZerados, totalTempoPausa }
+    return { totalProduzidas, totalRefugo, temBaseRefugo, taxaRefugo, opsAbertas, opsConcluidas, opsAtrasadas, maqAtivas, estoquesCriticos, estoquesZerados, totalTempoPausa }
   }, [apontamentos, ordens, saldos, pausas])
 
   // ─── Tendência de produção nos últimos 7 dias (sparkline do KPI) ───────────
@@ -259,7 +262,11 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
         const apsUltimaEtapa = ultimaOperacaoId
           ? aps.filter(a => a.operacao_id === ultimaOperacaoId)
           : aps
-        const produzidas = apsUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+        let produzidas = apsUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+        if (produzidas === 0 && aps.length > 0) {
+          const totalGeralAps = aps.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+          if (totalGeralAps > 0) produzidas = totalGeralAps
+        }
         const pct = op.quantidade > 0 ? Math.min(100, (produzidas / op.quantidade) * 100) : 0
         const atrasada = op.data_programacao < toDateStr(new Date())
         const emAndamento = aps.some(a => a.status === "em_andamento")
@@ -405,11 +412,12 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           {
             label: "Taxa de refugo",
             value: kpis.taxaRefugo,
+            hasBase: kpis.temBaseRefugo,
             decimals: 1,
             suffix: "%",
             icon: TrendingDown,
-            color: kpis.taxaRefugo > 5 ? "text-destructive" : kpis.taxaRefugo > 2 ? "text-amber-500" : "text-green-600",
-            sub: kpis.taxaRefugo > 5 ? "Acima do limite" : "Dentro do limite"
+            color: !kpis.temBaseRefugo ? "text-muted-foreground" : kpis.taxaRefugo > 5 ? "text-destructive" : kpis.taxaRefugo > 2 ? "text-amber-500" : "text-green-600",
+            sub: !kpis.temBaseRefugo ? "Sem apontamentos no período" : kpis.taxaRefugo > 5 ? "Acima do limite" : "Dentro do limite"
           },
           {
             label: "OPs em aberto",
@@ -429,7 +437,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
             color: kpis.estoquesCriticos + kpis.estoquesZerados > 0 ? "text-destructive" : "text-green-600",
             sub: kpis.estoquesZerados > 0 ? `${kpis.estoquesZerados} zerado${kpis.estoquesZerados > 1 ? "s" : ""}` : "Estoque ok"
           },
-        ].map(({ label, value, decimals, suffix, icon: Icon, color, sub, spark }: any) => (
+        ].map(({ label, value, hasBase, decimals, suffix, icon: Icon, color, sub, spark }: any) => (
           <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 shadow-sm">
             <div className="flex items-center gap-3 mb-2">
               <div className="h-9 w-9 flex items-center justify-center rounded-xl bg-muted flex-shrink-0">
@@ -438,7 +446,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
               <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider leading-tight">{label}</p>
             </div>
             <p className="text-2xl font-black text-foreground">
-              <CountUp value={value} decimals={decimals} suffix={suffix} />
+              {hasBase === false ? "N/A" : <CountUp value={value} decimals={decimals} suffix={suffix} />}
             </p>
             <p className={`text-[10px] font-bold mt-1 ${color}`}>{sub}</p>
             {spark && <div className="mt-2 -mx-1"><Sparkline data={spark} color={color} /></div>}
