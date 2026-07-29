@@ -297,6 +297,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
+  const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
+
   const loadData = async () => {
     setLoading(true)
     try {
@@ -311,7 +313,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           .order("created_at", { ascending: false }),
         supabase.from("excecao_grupos").select("id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
         supabase.from("excecao_subgrupos").select("id, grupo_id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
-        supabase.from("produtos").select("codigo, operacoes(id, ordem)").eq("empresa_id", empresaAtivaId!),
+        supabase.from("produtos").select("codigo, descricao, operacoes(id, ordem)").eq("empresa_id", empresaAtivaId!),
       ])
 
       if (opsRes.error) {
@@ -329,13 +331,16 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
       // Mapeia produto -> id da última operação do roteiro (a que entrega a peça pronta)
       const mapaUltimaOp: Record<string, string> = {}
+      const mapaDesc: Record<string, string> = {}
       for (const p of (prodRes.data || []) as any[]) {
+        if (p.descricao) mapaDesc[p.codigo] = p.descricao
         const opsRoteiro = (p.operacoes || []) as { id: string; ordem: number }[]
         if (opsRoteiro.length === 0) continue
         const ultima = opsRoteiro.reduce((a, b) => (b.ordem > a.ordem ? b : a))
         mapaUltimaOp[p.codigo] = ultima.id
       }
       setUltimaOperacaoPorProduto(mapaUltimaOp)
+      setMapaDescricaoProdutos(mapaDesc)
 
       const gruposFormatados: Grupo[] = (gRes.data || []).map((g: any) => ({
         id: g.id,
@@ -986,18 +991,27 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                   <SelectValue placeholder="Selecione a OP" />
                 </SelectTrigger>
                 <SelectContent className="bg-card border-border">
-                  {resumos.filter(r => !r.fechada).map(r => (
-                    <SelectItem key={r.op.id} value={r.op.id}>{r.op.numero_op} — {r.op.produto_codigo}</SelectItem>
-                  ))}
+                  {resumos.filter(r => !r.fechada).map(r => {
+                    const desc = mapaDescricaoProdutos[r.op.produto_codigo]
+                    const prodTexto = desc ? `${r.op.produto_codigo} - ${desc}` : r.op.produto_codigo
+                    const opTitle = r.op.numero_op.toLowerCase().startsWith("op") ? r.op.numero_op : `OP ${r.op.numero_op}`
+                    return (
+                      <SelectItem key={r.op.id} value={r.op.id}>{opTitle} — {prodTexto}</SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
             </div>
 
             {ordemAtual && (
               <div className="bg-muted/40 rounded-xl p-4 space-y-1.5 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Produto</span>
-                  <span className="font-bold text-foreground">{ordemAtual.produto_codigo}</span>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-muted-foreground flex-shrink-0">Produto</span>
+                  <span className="font-bold text-foreground text-right truncate" title={mapaDescricaoProdutos[ordemAtual.produto_codigo] ? `${ordemAtual.produto_codigo} - ${mapaDescricaoProdutos[ordemAtual.produto_codigo]}` : ordemAtual.produto_codigo}>
+                    {mapaDescricaoProdutos[ordemAtual.produto_codigo]
+                      ? `${ordemAtual.produto_codigo} - ${mapaDescricaoProdutos[ordemAtual.produto_codigo]}`
+                      : ordemAtual.produto_codigo}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Quantidade</span>
@@ -1159,8 +1173,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                     <div className="flex items-start justify-between cursor-pointer" onClick={() => setOpExpandida(expandida ? null : resumo.op.id)}>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-foreground">{resumo.op.numero_op}</span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full uppercase">{resumo.op.produto_codigo}</span>
+                          <span className="text-sm font-bold text-foreground">{resumo.op.numero_op.toLowerCase().startsWith("op") ? resumo.op.numero_op : `OP ${resumo.op.numero_op}`}</span>
+                          {(() => {
+                            const desc = mapaDescricaoProdutos[resumo.op.produto_codigo]
+                            const prodTexto = desc ? `${resumo.op.produto_codigo} - ${desc}` : resumo.op.produto_codigo
+                            return (
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[220px]" title={prodTexto}>{prodTexto}</span>
+                            )
+                          })()}
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.classes}`}>{badge.label}</span>
                           {resumo.fechada && <span className="text-[10px] font-bold px-2 py-0.5 bg-green-500/10 text-green-600 rounded-full border border-green-500/20">Encerrada</span>}
                         </div>
