@@ -18,7 +18,6 @@ import { EquipeTab } from "@/components/equipe-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
-import { formatarCnpj } from "@/lib/cnpj"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
@@ -55,7 +54,6 @@ export default function ExataApp() {
   // configurações
   const [defaultTime,     setDefaultTime]     = useState("")
   const [defaultTimeUnit, setDefaultTimeUnit] = useState<"hours" | "minutes" | "seconds">("hours")
-  const [isSavingConf,    setIsSavingConf]    = useState(false)
 
   // dados da fábrica
   const [confNome,        setConfNome]        = useState("")
@@ -207,25 +205,6 @@ export default function ExataApp() {
   const handleSair = () => signOut()
 
 
-  // --- Salvar configurações ---
-  const handleSaveConf = async () => {
-    if (!empresaAtivaId) return
-    setIsSavingConf(true)
-    const { error } = await supabase
-      .from("empresas")
-      .update({
-        tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
-        unidade_tempo: defaultTimeUnit,
-      })
-      .eq("id", empresaAtivaId)
-    if (error) {
-      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
-    } else {
-      toast({ title: "✅ Configurações salvas" })
-    }
-    setIsSavingConf(false)
-  }
-
   const carregarConfFabrica = async (empId: string) => {
     // 1. Tenta carregar do cache local da empresa primeiro para resposta imediata
     const cacheKeyFabrica = `exata_fabrica_dados_${empId}`
@@ -255,14 +234,20 @@ export default function ExataApp() {
       } catch { }
     }
 
-    // 2. Busca dados autoritativos no Supabase
-    const { data, error } = await supabase
-      .from("empresas")
-      .select("nome, cnpj, endereco, segmento, num_funcionarios, meta_oee, meta_refugo, meta_produtividade, tempo_padrao, unidade_tempo")
-      .eq("id", empId)
-      .single()
+    // 2. Busca dados autoritativos pela API autenticada. Os dados cadastrais
+    // são gravados somente pelo fluxo de consulta do CNPJ.
+    const { data: authData } = await supabase.auth.getSession()
+    const token = authData.session?.access_token
+    if (!token) return
 
-    if (data && !error) {
+    const response = await fetch("/api/empresa/configuracoes", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const payload = await response.json()
+    const data = payload.empresa
+
+    if (response.ok && data) {
       const nome = data.nome ?? ""
       const cnpj = data.cnpj ?? ""
       const endereco = data.endereco ?? ""
@@ -294,33 +279,42 @@ export default function ExataApp() {
   const handleSaveFabrica = async () => {
     if (!empresaAtivaId) return
     setIsSavingFabrica(true)
-    const payload = {
-      nome: confNome,
-      cnpj: confCnpj,
-      endereco: confEndereco,
-      segmento: confSegmento,
-      num_funcionarios: confFuncionarios,
-      tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
-      unidade_tempo: defaultTimeUnit,
+    const { data: authData } = await supabase.auth.getSession()
+    const token = authData.session?.access_token
+
+    if (!token) {
+      toast({ title: "Sessão expirada", description: "Entre novamente no sistema.", variant: "destructive" })
+      setIsSavingFabrica(false)
+      return
     }
 
-    const { error } = await supabase
-      .from("empresas")
-      .update(payload)
-      .eq("id", empresaAtivaId)
+    const response = await fetch("/api/empresa/configuracoes", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        num_funcionarios: confFuncionarios,
+        tempo_padrao: defaultTime || null,
+        unidade_tempo: defaultTimeUnit,
+      }),
+    })
+    const result = await response.json()
 
-    if (error) {
-      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
+    if (!response.ok) {
+      toast({ title: "Erro ao salvar", description: result.error, variant: "destructive" })
     } else {
+      const empresa = result.empresa
       const cacheKeyFabrica = `exata_fabrica_dados_${empresaAtivaId}`
       localStorage.setItem(cacheKeyFabrica, JSON.stringify({
-        nome: confNome,
-        cnpj: confCnpj,
-        endereco: confEndereco,
-        segmento: confSegmento,
-        num_funcionarios: confFuncionarios,
-        tempo_padrao: defaultTime,
-        unidade_tempo: defaultTimeUnit,
+        nome: empresa.nome ?? "",
+        cnpj: empresa.cnpj ?? "",
+        endereco: empresa.endereco ?? "",
+        segmento: empresa.segmento ?? "",
+        num_funcionarios: empresa.num_funcionarios ?? "",
+        tempo_padrao: empresa.tempo_padrao?.toString() ?? "",
+        unidade_tempo: empresa.unidade_tempo ?? "hours",
       }))
       toast({ title: "✅ Dados da fábrica salvos" })
     }
@@ -826,7 +820,7 @@ export default function ExataApp() {
                       <div className="flex items-center justify-between gap-4">
                         <div>
                           <h3 className="text-sm font-bold text-foreground">Dados da Fábrica</h3>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">Informações gerais e operacionais</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Dados cadastrais sincronizados e informações operacionais</p>
                         </div>
                         {isSystemManager && (
                           <button
@@ -843,14 +837,14 @@ export default function ExataApp() {
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1.5 col-span-2">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Nome da Fábrica</label>
-                          <input type="text" value={confNome} onChange={e => setConfNome(e.target.value)}
-                            className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
+                          <input type="text" value={confNome} readOnly aria-readonly="true"
+                            className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default" />
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">CNPJ</label>
-                          <input type="text" value={confCnpj} onChange={e => setConfCnpj(formatarCnpj(e.target.value))} placeholder="00.000.000/0000-00"
+                          <input type="text" value={confCnpj} readOnly aria-readonly="true" placeholder="00.000.000/0000-00"
                             maxLength={18} autoCapitalize="characters" spellCheck={false}
-                            className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
+                            className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default" />
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Nº Funcionários</label>
@@ -859,13 +853,13 @@ export default function ExataApp() {
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Segmento</label>
-                          <input type="text" value={confSegmento} onChange={e => setConfSegmento(e.target.value)} placeholder="Ex: Têxtil"
-                            className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
+                          <input type="text" value={confSegmento} readOnly aria-readonly="true" placeholder="Ex: Têxtil"
+                            className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default" />
                         </div>
                         <div className="space-y-1.5 col-span-2">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Endereço</label>
-                          <input type="text" value={confEndereco} onChange={e => setConfEndereco(e.target.value)} placeholder="Rua, número, cidade"
-                            className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
+                          <input type="text" value={confEndereco} readOnly aria-readonly="true" placeholder="Rua, número, cidade"
+                            className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default" />
                         </div>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Tempo Operacional Padrão</label>
@@ -884,9 +878,12 @@ export default function ExataApp() {
                           </div>
                         </div>
                       </div>
+                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                        Nome, CNPJ, segmento e endereço são mantidos pela consulta cadastral. Funcionários e tempo operacional podem ser ajustados.
+                      </p>
                       <button onClick={handleSaveFabrica} disabled={isSavingFabrica}
                         className="w-full h-11 flex items-center justify-center bg-primary text-primary-foreground font-bold uppercase tracking-widest text-[11px] rounded-xl hover:opacity-90 transition-all disabled:opacity-50">
-                        {isSavingFabrica ? "Salvando..." : "Salvar Dados da Fábrica"}
+                        {isSavingFabrica ? "Salvando..." : "Salvar Dados Operacionais"}
                       </button>
                     </div>
                   </div>
