@@ -126,6 +126,13 @@ export default function ExataApp() {
       .then(({ data }) => { if (data) setCodigoAtual(data.codigo) })
   }, [empresaAtivaId])
 
+  // Recarrega configurações sempre que o usuário acessar a aba de configurações
+  useEffect(() => {
+    if (activeTab === "configuracoes" && empresaAtivaId) {
+      carregarConfFabrica(empresaAtivaId)
+    }
+  }, [activeTab, empresaAtivaId])
+
   // helper de cópia
   const copiarCodigo = (codigo: string, setter: (v: boolean) => void) => {
     navigator.clipboard.writeText(codigo).then(() => {
@@ -205,43 +212,101 @@ export default function ExataApp() {
   }
 
   const carregarConfFabrica = async (empId: string) => {
-    const { data } = await supabase
+    // 1. Tenta carregar do cache local da empresa primeiro para resposta imediata
+    const cacheKeyFabrica = `exata_fabrica_dados_${empId}`
+    const cacheKeyMetas = `exata_metas_dados_${empId}`
+    const cachedFabrica = localStorage.getItem(cacheKeyFabrica)
+    const cachedMetas = localStorage.getItem(cacheKeyMetas)
+
+    if (cachedFabrica) {
+      try {
+        const cf = JSON.parse(cachedFabrica)
+        if (cf.nome !== undefined) setConfNome(cf.nome)
+        if (cf.cnpj !== undefined) setConfCnpj(cf.cnpj)
+        if (cf.endereco !== undefined) setConfEndereco(cf.endereco)
+        if (cf.segmento !== undefined) setConfSegmento(cf.segmento)
+        if (cf.num_funcionarios !== undefined) setConfFuncionarios(cf.num_funcionarios)
+        if (cf.tempo_padrao !== undefined) setDefaultTime(cf.tempo_padrao)
+        if (cf.unidade_tempo !== undefined) setDefaultTimeUnit(cf.unidade_tempo)
+      } catch { }
+    }
+
+    if (cachedMetas) {
+      try {
+        const cm = JSON.parse(cachedMetas)
+        if (cm.meta_oee !== undefined) setMetaOEE(cm.meta_oee)
+        if (cm.meta_refugo !== undefined) setMetaRefugo(cm.meta_refugo)
+        if (cm.meta_produtividade !== undefined) setMetaProdutividade(cm.meta_produtividade)
+      } catch { }
+    }
+
+    // 2. Busca dados autoritativos no Supabase
+    const { data, error } = await supabase
       .from("empresas")
       .select("nome, cnpj, endereco, segmento, num_funcionarios, meta_oee, meta_refugo, meta_produtividade, tempo_padrao, unidade_tempo")
       .eq("id", empId)
       .single()
-    if (data) {
-      setConfNome(data.nome ?? "")
-      setConfCnpj(data.cnpj ?? "")
-      setConfEndereco(data.endereco ?? "")
-      setConfSegmento(data.segmento ?? "")
-      setConfFuncionarios(data.num_funcionarios ?? "")
-      setMetaOEE(data.meta_oee?.toString() ?? "85")
-      setMetaRefugo(data.meta_refugo?.toString() ?? "2")
-      setMetaProdutividade(data.meta_produtividade?.toString() ?? "90")
-      setDefaultTime(data.tempo_padrao?.toString() ?? "")
-      setDefaultTimeUnit(data.unidade_tempo ?? "hours")
+
+    if (data && !error) {
+      const nome = data.nome ?? ""
+      const cnpj = data.cnpj ?? ""
+      const endereco = data.endereco ?? ""
+      const segmento = data.segmento ?? ""
+      const num_funcionarios = data.num_funcionarios ?? ""
+      const meta_oee = data.meta_oee !== null && data.meta_oee !== undefined ? data.meta_oee.toString() : "85"
+      const meta_refugo = data.meta_refugo !== null && data.meta_refugo !== undefined ? data.meta_refugo.toString() : "2"
+      const meta_produtividade = data.meta_produtividade !== null && data.meta_produtividade !== undefined ? data.meta_produtividade.toString() : "90"
+      const tempo_padrao = data.tempo_padrao?.toString() ?? ""
+      const unidade_tempo = data.unidade_tempo ?? "hours"
+
+      setConfNome(nome)
+      setConfCnpj(cnpj)
+      setConfEndereco(endereco)
+      setConfSegmento(segmento)
+      setConfFuncionarios(num_funcionarios)
+      setMetaOEE(meta_oee)
+      setMetaRefugo(meta_refugo)
+      setMetaProdutividade(meta_produtividade)
+      setDefaultTime(tempo_padrao)
+      setDefaultTimeUnit(unidade_tempo)
+
+      // Atualiza cache local da fábrica ativa
+      localStorage.setItem(cacheKeyFabrica, JSON.stringify({ nome, cnpj, endereco, segmento, num_funcionarios, tempo_padrao, unidade_tempo }))
+      localStorage.setItem(cacheKeyMetas, JSON.stringify({ meta_oee, meta_refugo, meta_produtividade }))
     }
   }
 
   const handleSaveFabrica = async () => {
     if (!empresaAtivaId) return
     setIsSavingFabrica(true)
+    const payload = {
+      nome: confNome,
+      cnpj: confCnpj,
+      endereco: confEndereco,
+      segmento: confSegmento,
+      num_funcionarios: confFuncionarios,
+      tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
+      unidade_tempo: defaultTimeUnit,
+    }
+
     const { error } = await supabase
       .from("empresas")
-      .update({
+      .update(payload)
+      .eq("id", empresaAtivaId)
+
+    if (error) {
+      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
+    } else {
+      const cacheKeyFabrica = `exata_fabrica_dados_${empresaAtivaId}`
+      localStorage.setItem(cacheKeyFabrica, JSON.stringify({
         nome: confNome,
         cnpj: confCnpj,
         endereco: confEndereco,
         segmento: confSegmento,
         num_funcionarios: confFuncionarios,
-        tempo_padrao: defaultTime ? parseFloat(defaultTime) : null,
+        tempo_padrao: defaultTime,
         unidade_tempo: defaultTimeUnit,
-      })
-      .eq("id", empresaAtivaId)
-    if (error) {
-      toast({ title: "Erro ao salvar", description: error.message, variant: "destructive" })
-    } else {
+      }))
       toast({ title: "✅ Dados da fábrica salvos" })
     }
     setIsSavingFabrica(false)
@@ -250,17 +315,38 @@ export default function ExataApp() {
   const handleSaveMetas = async () => {
     if (!empresaAtivaId) return
     setIsSavingMetas(true)
+
+    const parsedOEE = parseFloat(metaOEE)
+    const parsedRefugo = parseFloat(metaRefugo)
+    const parsedProd = parseFloat(metaProdutividade)
+
+    const valOEE = isNaN(parsedOEE) ? 85 : parsedOEE
+    const valRefugo = isNaN(parsedRefugo) ? 2 : parsedRefugo
+    const valProd = isNaN(parsedProd) ? 90 : parsedProd
+
+    const payload = {
+      meta_oee: valOEE,
+      meta_refugo: valRefugo,
+      meta_produtividade: valProd,
+    }
+
     const { error } = await supabase
       .from("empresas")
-      .update({
-        meta_oee: parseFloat(metaOEE) || 85,
-        meta_refugo: parseFloat(metaRefugo) || 2,
-        meta_produtividade: parseFloat(metaProdutividade) || 90,
-      })
+      .update(payload)
       .eq("id", empresaAtivaId)
+
     if (error) {
       toast({ title: "Erro ao salvar metas", description: error.message, variant: "destructive" })
     } else {
+      const cacheKeyMetas = `exata_metas_dados_${empresaAtivaId}`
+      localStorage.setItem(cacheKeyMetas, JSON.stringify({
+        meta_oee: valOEE.toString(),
+        meta_refugo: valRefugo.toString(),
+        meta_produtividade: valProd.toString(),
+      }))
+      setMetaOEE(valOEE.toString())
+      setMetaRefugo(valRefugo.toString())
+      setMetaProdutividade(valProd.toString())
       toast({ title: "✅ Metas salvas" })
     }
     setIsSavingMetas(false)
