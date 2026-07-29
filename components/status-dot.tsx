@@ -3,7 +3,7 @@
 import React from "react"
 
 interface StatusDotProps {
-  color?: "green" | "amber" | "red" | "muted"
+  color?: "green" | "amber" | "blue" | "red" | "muted"
   pulse?: boolean
   className?: string
 }
@@ -11,6 +11,7 @@ interface StatusDotProps {
 const CORES: Record<string, string> = {
   green: "bg-green-500",
   amber: "bg-amber-500",
+  blue: "bg-blue-500",
   red: "bg-destructive",
   muted: "bg-muted-foreground/40",
 }
