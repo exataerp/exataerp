@@ -210,12 +210,16 @@ export function RelatoriosTab({
   // ─── Cálculos OEE ─────────────────────────────────────────────────────────
 
   const dadosOEE = useMemo(() => {
+    const operacoesMap = new Map((operacoes || []).map(o => [o.id, o.maquina_id]))
     const diasPeriodo = Math.max(1, Math.round((new Date(fim).getTime() - new Date(inicio).getTime()) / (1000 * 60 * 60 * 24)))
     const horasDisponivelDia = 8
     const tempoDisponivelTotal = diasPeriodo * horasDisponivelDia * 3600
 
     return maquinas.map(maq => {
-      const apsMAq = apontamentos.filter(a => a.maquina_id === maq.id)
+      const apsMAq = apontamentos.filter(a => {
+        const effectiveMqId = a.maquina_id || (a.operacao_id ? operacoesMap.get(a.operacao_id) : null)
+        return effectiveMqId === maq.id
+      })
       const pausasMaq = pausas.filter(p => apsMAq.find(a => a.id === p.apontamento_id))
 
       const tempoRodando = apsMAq.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
