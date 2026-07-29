@@ -123,6 +123,9 @@ export function RelatoriosTab({
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
   const [movimentacoes, setMovimentacoes] = useState<any[]>([])
 
+  const [selectedMaquinaId, setSelectedMaquinaId] = useState<string>("all")
+  const [selectedOpId, setSelectedOpId] = useState<string>("all")
+
   // ─── Período ──────────────────────────────────────────────────────────────
 
   const { inicio, fim } = useMemo(() => {
@@ -207,20 +210,41 @@ export function RelatoriosTab({
     if (empresaAtivaId) loadData()
   }, [empresaAtivaId, inicio, fim])
 
+  // ─── Apontamentos filtrados por Máquina e OP ──────────────────────────────
+
+  const filteredApontamentos = useMemo(() => {
+    const operacoesMap = new Map((operacoes || []).map(o => [o.id, o.maquina_id]))
+    return apontamentos.filter(a => {
+      if (selectedMaquinaId !== "all") {
+        const effectiveMqId = a.maquina_id || (a.operacao_id ? operacoesMap.get(a.operacao_id) : null)
+        if (effectiveMqId !== selectedMaquinaId) return false
+      }
+      if (selectedOpId !== "all") {
+        if (a.ordem_id !== selectedOpId) return false
+      }
+      return true
+    })
+  }, [apontamentos, operacoes, selectedMaquinaId, selectedOpId])
+
   // ─── Cálculos OEE ─────────────────────────────────────────────────────────
 
   const dadosOEE = useMemo(() => {
     const operacoesMap = new Map((operacoes || []).map(o => [o.id, o.maquina_id]))
     const diasPeriodo = Math.max(1, Math.round((new Date(fim).getTime() - new Date(inicio).getTime()) / (1000 * 60 * 60 * 24)))
-    const horasDisponivelDia = 8
-    const tempoDisponivelTotal = diasPeriodo * horasDisponivelDia * 3600
 
-    return maquinas.map(maq => {
-      const apsMAq = apontamentos.filter(a => {
+    const maquinasParaExibir = selectedMaquinaId === "all"
+      ? maquinas
+      : maquinas.filter(m => m.id === selectedMaquinaId)
+
+    return maquinasParaExibir.map(maq => {
+      const apsMAq = filteredApontamentos.filter(a => {
         const effectiveMqId = a.maquina_id || (a.operacao_id ? operacoesMap.get(a.operacao_id) : null)
         return effectiveMqId === maq.id
       })
       const pausasMaq = pausas.filter(p => apsMAq.find(a => a.id === p.apontamento_id))
+
+      const horasDisponivelDia = maq.tempo_operacional_dia || 8
+      const tempoDisponivelTotal = diasPeriodo * horasDisponivelDia * 3600
 
       const tempoRodando = apsMAq.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
       const tempoPausa = pausasMaq.reduce((s, p) => {
@@ -244,9 +268,9 @@ export function RelatoriosTab({
       const semCiclo = opsMaq.length === 0 || tempoTeorico === 0
       const performance = tempoEfetivo > 0 && tempoTeorico > 0
         ? Math.min(100, (tempoTeorico / tempoEfetivo) * 100)
-        : tempoEfetivo > 0 ? 80 : 0
+        : tempoEfetivo > 0 ? 80 : (totalProduzidas > 0 ? 100 : 0)
 
-      const qualidade = totalProduzidas > 0 ? (totalBoas / totalProduzidas) * 100 : 0
+      const qualidade = totalProduzidas > 0 ? (totalBoas / totalProduzidas) * 100 : (tempoEfetivo > 0 ? 100 : 0)
       const oee = (disponibilidade / 100) * (performance / 100) * (qualidade / 100) * 100
 
       // Flags de dados insuficientes
@@ -270,13 +294,13 @@ export function RelatoriosTab({
         dadosCompletos: avisos.length === 0,
       }
     }).filter(d => d.tempoRodando > 0 || d.totalProduzidas > 0)
-  }, [maquinas, apontamentos, pausas, operacoes, inicio, fim])
+  }, [maquinas, filteredApontamentos, pausas, operacoes, inicio, fim, selectedMaquinaId])
 
   // ─── Taxa de refugo por produto ───────────────────────────────────────────
 
   const dadosRefugo = useMemo(() => {
     const mapa: Record<string, { produzidas: number; refugo: number; retrabalho: number }> = {}
-    for (const ap of apontamentos) {
+    for (const ap of filteredApontamentos) {
       const op = ordens.find(o => o.id === ap.ordem_id)
       const codigo = op?.produto_codigo ?? "Desconhecido"
       if (!mapa[codigo]) mapa[codigo] = { produzidas: 0, refugo: 0, retrabalho: 0 }
@@ -294,13 +318,13 @@ export function RelatoriosTab({
         taxaRetrabalho: d.produzidas > 0 ? parseFloat(((d.retrabalho / d.produzidas) * 100).toFixed(1)) : 0,
       }))
       .sort((a, b) => b.taxaRefugo - a.taxaRefugo)
-  }, [apontamentos, ordens])
+  }, [filteredApontamentos, ordens])
 
   // ─── Ciclo real vs planejado ──────────────────────────────────────────────
 
   const dadosCiclo = useMemo(() => {
     const mapa: Record<string, { nome: string; totalSeg: number; count: number; planejadoSeg: number }> = {}
-    for (const ap of apontamentos) {
+    for (const ap of filteredApontamentos) {
       if (!ap.operacao_nome || !ap.cronometro_total_segundos || !ap.pecas_produzidas) continue
       const key = ap.operacao_nome
       if (!mapa[key]) {
@@ -328,7 +352,7 @@ export function RelatoriosTab({
       .filter(d => d.real > 0)
       .sort((a, b) => Math.abs(b.desvio) - Math.abs(a.desvio))
       .slice(0, 10)
-  }, [apontamentos, operacoes])
+  }, [filteredApontamentos, operacoes])
 
   // ─── Consumo de matéria-prima ─────────────────────────────────────────────
 
@@ -380,10 +404,10 @@ export function RelatoriosTab({
   // ─── KPIs gerais ─────────────────────────────────────────────────────────
 
   const kpis = useMemo(() => {
-    const totalProduzidas = apontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalRefugo = apontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const totalRetrabalho = apontamentos.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
-    const totalSegundos = apontamentos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
+    const totalProduzidas = filteredApontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+    const totalRefugo = filteredApontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
+    const totalRetrabalho = filteredApontamentos.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
+    const totalSegundos = filteredApontamentos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
     const totalPausaSeg = pausas.reduce((s, p) => {
       if (!p.fim) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
@@ -393,7 +417,7 @@ export function RelatoriosTab({
     const taxaRefugo = temBaseRefugo ? (totalRefugo / (totalProduzidas + totalRefugo)) * 100 : 0
     const oeeGeral = temBaseOEE ? dadosOEE.reduce((s, d) => s + d.oee, 0) / dadosOEE.length : 0
     return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, temBaseRefugo, temBaseOEE, taxaRefugo, oeeGeral }
-  }, [apontamentos, pausas, dadosOEE])
+  }, [filteredApontamentos, pausas, dadosOEE])
 
   if (loading) {
     return (
@@ -431,6 +455,7 @@ export function RelatoriosTab({
           <p className="text-sm text-muted-foreground mt-0.5">Análise de desempenho operacional</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Filtro Período */}
           <Select value={periodo} onValueChange={(v: Periodo) => setPeriodo(v)}>
             <SelectTrigger className="w-36 h-9 text-xs rounded-xl border border-border bg-input text-foreground outline-none focus:ring-2 focus:ring-primary transition-all">
               <SelectValue />
@@ -448,7 +473,34 @@ export function RelatoriosTab({
               <DatePicker value={dataFim} onChange={setDataFim} className="w-36" />
             </>
           )}
-          <button onClick={loadData} className="h-9 w-9 flex items-center justify-center rounded-xl border border-border text-muted-foreground hover:bg-muted transition-colors">
+
+          {/* Filtro Máquina */}
+          <Select value={selectedMaquinaId} onValueChange={setSelectedMaquinaId}>
+            <SelectTrigger className="w-44 h-9 text-xs rounded-xl border border-border bg-input text-foreground outline-none focus:ring-2 focus:ring-primary transition-all">
+              <SelectValue placeholder="Todas as Máquinas" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border max-h-56">
+              <SelectItem value="all">Todas as Máquinas</SelectItem>
+              {maquinas.map(m => (
+                <SelectItem key={m.id} value={m.id}>{m.codigo} - {m.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Filtro OP */}
+          <Select value={selectedOpId} onValueChange={setSelectedOpId}>
+            <SelectTrigger className="w-44 h-9 text-xs rounded-xl border border-border bg-input text-foreground outline-none focus:ring-2 focus:ring-primary transition-all">
+              <SelectValue placeholder="Todas as OPs" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border max-h-56">
+              <SelectItem value="all">Todas as OPs</SelectItem>
+              {ordens.map(o => (
+                <SelectItem key={o.id} value={o.id}>OP {o.numero_op} ({o.produto_codigo})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <button onClick={loadData} className="h-9 w-9 flex items-center justify-center rounded-xl border border-border text-muted-foreground hover:bg-muted transition-colors" title="Atualizar dados">
             <RefreshCw className="h-4 w-4" />
           </button>
         </div>
@@ -494,7 +546,7 @@ export function RelatoriosTab({
       {relatorioAtivo === "oee" && (
         <div className="space-y-4">
           {dadosOEE.length === 0 ? (
-            <EmptyState icon={BarChart3} label="Nenhum apontamento com máquina vinculada no período" />
+            <EmptyState icon={BarChart3} label="Nenhum apontamento encontrado com os filtros selecionados" />
           ) : (
             <>
               {/* Avisos de dados insuficientes */}
