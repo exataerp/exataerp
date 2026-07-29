@@ -525,7 +525,13 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                       <span className="text-xs font-bold text-foreground">{opTitle}</span>
                       <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[220px]" title={prodTexto}>{prodTexto}</span>
                       {atrasada && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-destructive/10 text-destructive rounded-full flex-shrink-0">Atrasada</span>}
-                      {emAndamento && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-green-500/10 text-green-600 rounded-full flex items-center gap-0.5 flex-shrink-0"><span className="h-1 w-1 rounded-full bg-green-500 animate-pulse" />Rodando</span>}
+                      {pct >= 100 || op.status === "encerrada" ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-600 rounded-full border border-blue-500/20 flex-shrink-0">Encerrada</span>
+                      ) : emAndamento || pct > 0 ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-green-500/10 text-green-600 rounded-full border border-green-500/20 flex items-center gap-1 flex-shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />Iniciada</span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-500/10 text-amber-600 rounded-full border border-amber-500/20 flex-shrink-0">Agendada</span>
+                      )}
                     </div>
                   <div className="text-right flex-shrink-0 ml-3">
                     <span className="text-sm font-bold text-foreground">{pct.toFixed(0)}%</span>
@@ -534,7 +540,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${atrasada ? "bg-destructive" : pct >= 100 ? "bg-green-500" : "bg-primary"}`}
+                    className={`h-full rounded-full transition-all ${atrasada ? "bg-destructive" : pct >= 100 || op.status === "encerrada" ? "bg-blue-500" : pct > 0 ? "bg-green-500" : "bg-amber-500"}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
