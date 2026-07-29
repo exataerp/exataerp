@@ -18,6 +18,21 @@ import {
   type LucideIcon
 } from "lucide-react"
 
+/**
+ * Identifica se uma pausa cadastrada corresponde a um intervalo programado
+ * (ex: Almoço, Refeição, Fim de Turno, Troca de Turno, Intervalo Previsto),
+ * que NÃO deve ser contabilizado como indisponibilidade de máquina ou falha operacional.
+ */
+export function isPausaProgramada(subgrupoNome?: string, grupoNome?: string): boolean {
+  if (!subgrupoNome && !grupoNome) return false
+  const texto = `${subgrupoNome || ""} ${grupoNome || ""}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  const termosProgramados = [
+    "almoco", "refeicao", "janta", "jantar", "fim de turno", "troca de turno", "troca turno",
+    "intervalo", "pausa programada", "fora de turno", "tempo nao programado", "descanso", "lanche"
+  ]
+  return termosProgramados.some(termo => texto.includes(termo))
+}
+
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface Apontamento {
@@ -258,12 +273,16 @@ export function RelatoriosTab({
       const tempoDisponivelTotal = diasPeriodo * horasDisponivelDia * 3600
 
       const tempoRodando = apsMAq.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
-      const tempoPausa = pausasMaq.reduce((s, p) => {
+      
+      // Separamos apenas as paradas operacionais não planejadas (quebra, setup, falta de material).
+      // Pausas programadas (Almoço, Refeição, Fim de Turno, Troca de Turno) NÃO reduzem a disponibilidade nem o OEE.
+      const tempoPausaNaoPlanejada = pausasMaq.reduce((s, p) => {
         if (!p.fim) return s
+        if (isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome)) return s
         return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
       }, 0)
 
-      const tempoEfetivo = Math.max(0, tempoRodando - tempoPausa)
+      const tempoEfetivo = Math.max(0, tempoRodando - tempoPausaNaoPlanejada)
       const totalProduzidas = apsMAq.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
       const totalRefugo = apsMAq.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
       const totalBoas = totalProduzidas - totalRefugo
@@ -541,6 +560,18 @@ export function RelatoriosTab({
           <button onClick={loadData} className="h-9 w-9 flex items-center justify-center rounded-xl border border-border text-muted-foreground hover:bg-muted transition-colors" title="Atualizar dados">
             <RefreshCw className="h-4 w-4" />
           </button>
+        </div>
+      </div>
+
+      {/* Aviso Orientativo sobre Paradas Programadas e Histórico */}
+      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 flex items-start gap-3 text-xs">
+        <Clock className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="font-bold text-foreground">Regra de Paradas Programadas (Almoço / Fim de Turno)</p>
+          <p className="text-muted-foreground leading-relaxed">
+            Pausas registradas como <strong>Almoço</strong>, <strong>Refeição</strong>, <strong>Fim de Turno</strong> ou <strong>Intervalo Programado</strong> são tratadas como tempo não programado e não penalizam a Disponibilidade nem o OEE da fábrica.
+            Caso precise recategorizar paradas históricas afetadas por lançamentos incorretos em horários de intervalo, utilize o gerenciador na aba <strong>Exceções</strong>.
+          </p>
         </div>
       </div>
 
