@@ -447,7 +447,7 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
     if (operations.length === 0) return
     setIsLoading(true)
     try {
-      await exportToExcel(operations, timeUnit)
+      await exportToExcel(operations, timeUnit, productCode, productName)
       toast({ title: "✅ Excel exportado", description: "A planilha foi baixada." })
     } catch {
       toast({ title: "❌ Erro", description: "Falha ao exportar Excel.", variant: "destructive" })
