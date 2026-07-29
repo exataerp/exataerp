@@ -11,10 +11,13 @@ export interface Operation {
   maquina_codigo?: string
 }
 
-export const exportToExcel = async (operations: Operation[], timeUnit: string) => {
+export const exportToExcel = async (operations: Operation[], timeUnit: string, productCode?: string, productDescription?: string) => {
   const data = operations.map((op, index) => ({
+    "PRODUTO CÓDIGO": productCode || "-",
+    "PRODUTO DESCRIÇÃO": productDescription || "-",
     "ORDEM": index + 1,
     "NOME DA OPERAÇÃO": op.name,
+    "MÁQUINA": op.maquina_codigo ? `${op.maquina_codigo}${op.maquina_nome ? ` - ${op.maquina_nome}` : ""}` : "-",
     "TEMPO": op.time,
     "SETUP": op.setupTime || 0,
     "UNIDADE": op.unit === "seconds" ? "segundos" : "minutos"
@@ -22,7 +25,7 @@ export const exportToExcel = async (operations: Operation[], timeUnit: string) =
   const ws = XLSX.utils.json_to_sheet(data)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, "Operacoes")
-  XLSX.writeFile(wb, "analise-gbo.xlsx")
+  XLSX.writeFile(wb, productCode ? `analise-gbo-${productCode}.xlsx` : "analise-gbo.xlsx")
 }
 
 export const downloadTemplate = () => {
