@@ -125,6 +125,11 @@ function formatTempo(seg: number) {
   if (h > 0) return `${h}h ${m}min`
   return `${m}min`
 }
+function formatTempoCiclo(segundos: number) {
+  if (!Number.isFinite(segundos) || segundos <= 0) return "0 s"
+  if (segundos < 60) return `${formatNum(segundos, segundos < 10 ? 1 : 0)} s`
+  return `${formatNum(segundos / 60, 2)} min`
+}
 
 const APPLE_CHART_COLORS = {
   blue: "rgb(var(--chart-system-blue))",
@@ -470,6 +475,7 @@ export function RelatoriosTab({
   )
   const produtosCiclo = resultadoCiclo.produtos
   const resumoCiclo = useMemo(() => calcularResumoCiclo(produtosCiclo), [produtosCiclo])
+  const dadosGraficoCiclo = useMemo(() => produtosCiclo.slice(0, 10), [produtosCiclo])
 
   // ─── Consumo de matéria-prima ─────────────────────────────────────────────
 
@@ -944,21 +950,33 @@ export function RelatoriosTab({
                   Produto = soma dos ciclos por peça das operações do roteiro. O tempo bruto dos cronômetros nunca é somado diretamente.
                 </p>
                 <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={produtosCiclo.slice(0, 10)} barGap={4}>
+                  <BarChart data={dadosGraficoCiclo} barGap={4}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis dataKey="codigo" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="min" />
-                    <Tooltip content={<ChartTooltip />} />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                      tickFormatter={valor => formatTempoCiclo(Number(valor) * 60)}
+                    />
+                    <Tooltip
+                      cursor={{
+                        fill: "rgb(var(--chart-hover-glass))",
+                        fillOpacity: 0.32,
+                        stroke: "rgb(var(--chart-hover-glass-border))",
+                        strokeOpacity: 0.7,
+                        strokeWidth: 1,
+                        rx: 16,
+                      }}
+                      content={<ChartTooltip valueFormatter={(valor: number) => formatTempoCiclo(Number(valor) * 60)} />}
+                    />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="min" />
+                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} />
                     <Bar
                       dataKey="real"
                       name="Realizado (verde ≤ previsto; vermelho >)"
                       fill={APPLE_CHART_COLORS.green}
                       radius={[4, 4, 0, 0]}
-                      unit="min"
                     >
-                      {produtosCiclo.slice(0, 10).map((produto, i) => (
+                      {dadosGraficoCiclo.map((produto, i) => (
                         <Cell
                           key={i}
                           fill={
@@ -1009,7 +1027,8 @@ export function RelatoriosTab({
                               >
                                 <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${expandido ? "rotate-180" : ""}`} />
                                 <span>
-                                  <span className="block text-xs font-bold text-foreground">{produto.produto}</span>
+                                  <span className="block text-xs font-bold text-foreground">{produto.codigo}</span>
+                                  {produto.descricao && <span className="block text-[10px] text-muted-foreground mt-0.5">{produto.descricao}</span>}
                                   {produto.ordens && <span className="block text-[10px] text-muted-foreground mt-0.5">OP {produto.ordens}</span>}
                                 </span>
                               </button>
@@ -1027,12 +1046,12 @@ export function RelatoriosTab({
                               </span>
                             </td>
                             <td className="px-4 py-3 text-xs text-muted-foreground">
-                              {produto.planejadoSeg > 0 ? `${formatNum(produto.planejado, 2)} min` : "Sem padrão"}
+                              {produto.planejadoSeg > 0 ? formatTempoCiclo(produto.planejadoSeg) : "Sem padrão"}
                             </td>
                             <td className="px-4 py-3">
                               {produto.operacoesMedidas > 0 ? (
                                 <>
-                                  <p className="text-xs font-bold text-foreground">{formatNum(produto.real, 2)} min</p>
+                                  <p className="text-xs font-bold text-foreground">{formatTempoCiclo(produto.realSeg)}</p>
                                   {!produto.comparavel && <p className="text-[10px] text-amber-600 mt-0.5">Somatório parcial</p>}
                                 </>
                               ) : <span className="text-xs text-muted-foreground">Sem medição</span>}
@@ -1098,10 +1117,10 @@ export function RelatoriosTab({
                                               ) : <span className="text-xs text-muted-foreground">Sem medição</span>}
                                             </td>
                                             <td className="px-3 py-2 text-xs text-muted-foreground">
-                                              {operacao.planejadoSeg > 0 ? `${formatNum(operacao.planejado, 2)} min` : "Sem padrão"}
+                                              {operacao.planejadoSeg > 0 ? formatTempoCiclo(operacao.planejadoSeg) : "Sem padrão"}
                                             </td>
                                             <td className="px-3 py-2 text-xs font-bold text-foreground">
-                                              {operacao.temMedicao ? `${formatNum(operacao.real, 2)} min` : "—"}
+                                              {operacao.temMedicao ? formatTempoCiclo(operacao.realSeg) : "—"}
                                             </td>
                                             <td className="px-3 py-2">
                                               {operacao.comparavel ? (

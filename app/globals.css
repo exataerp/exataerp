@@ -65,6 +65,8 @@
   --chart-system-red: 255 56 60;
   --chart-system-purple: 203 48 224;
   --chart-system-gray: 142 142 147;
+  --chart-hover-glass: 255 255 255;
+  --chart-hover-glass-border: 255 255 255;
 }
 
 .dark {
@@ -102,6 +104,8 @@
   --chart-system-red: 255 66 69;
   --chart-system-purple: 219 52 242;
   --chart-system-gray: 142 142 147;
+  --chart-hover-glass: 35 35 38;
+  --chart-hover-glass-border: 255 255 255;
 }
 
 @media (prefers-contrast: more) {
