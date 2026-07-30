@@ -126,7 +126,16 @@ function formatTempo(seg: number) {
   return `${m}min`
 }
 
-const CORES = ["hsl(var(--primary))", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#f97316"]
+const APPLE_CHART_COLORS = {
+  blue: "rgb(var(--chart-system-blue))",
+  indigo: "rgb(var(--chart-system-indigo))",
+  green: "rgb(var(--chart-system-green))",
+  teal: "rgb(var(--chart-system-teal))",
+  orange: "rgb(var(--chart-system-orange))",
+  red: "rgb(var(--chart-system-red))",
+  purple: "rgb(var(--chart-system-purple))",
+  gray: "rgb(var(--chart-system-gray))",
+} as const
 
 // ─── Tooltip customizado ──────────────────────────────────────────────────────
 
@@ -734,10 +743,10 @@ export function RelatoriosTab({
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill="#3b82f6" radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="performance" name="Performance" fill="#8b5cf6" radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="qualidade" name="Qualidade" fill="#22c55e" radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="oee" name="OEE" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.teal} radius={[4, 4, 0, 0]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -799,10 +808,19 @@ export function RelatoriosTab({
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="taxaRefugo" name="Refugo" radius={[4, 4, 0, 0]} unit="%">
                       {dadosRefugo.slice(0, 8).map((d, i) => (
-                        <Cell key={i} fill={d.taxaRefugo > 5 ? "#ef4444" : d.taxaRefugo > 2 ? "#f59e0b" : "#22c55e"} />
+                        <Cell
+                          key={i}
+                          fill={
+                            d.taxaRefugo > 5
+                              ? APPLE_CHART_COLORS.red
+                              : d.taxaRefugo > 2
+                                ? APPLE_CHART_COLORS.orange
+                                : APPLE_CHART_COLORS.green
+                          }
+                        />
                       ))}
                     </Bar>
-                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill="#8b5cf6" radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.purple} radius={[4, 4, 0, 0]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -932,15 +950,8 @@ export function RelatoriosTab({
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="min" />
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="planejado" name="Previsto do produto" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} unit="min" />
-                    <Bar dataKey="real" name="Realizado do produto" fill="#3b82f6" radius={[4, 4, 0, 0]} unit="min">
-                      {produtosCiclo.slice(0, 10).map((produto, i) => (
-                        <Cell
-                          key={i}
-                          fill={!produto.comparavel ? "#f59e0b" : produto.desvio > 20 ? "#ef4444" : produto.desvio > 0 ? "#f59e0b" : "#22c55e"}
-                        />
-                      ))}
-                    </Bar>
+                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.indigo} radius={[4, 4, 0, 0]} unit="min" />
+                    <Bar dataKey="real" name="Realizado do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="min" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1117,11 +1128,12 @@ export function RelatoriosTab({
                       tickFormatter={v => formatBRL(v)} />
                     <YAxis type="category" dataKey="codigo" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} width={60} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="valorTotal" name="Valor consumido" radius={[0, 4, 4, 0]}>
-                      {dadosConsumo.slice(0, 8).map((_, i) => (
-                        <Cell key={i} fill={CORES[i % CORES.length]} />
-                      ))}
-                    </Bar>
+                    <Bar
+                      dataKey="valorTotal"
+                      name="Valor consumido"
+                      fill={APPLE_CHART_COLORS.teal}
+                      radius={[0, 4, 4, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -1176,11 +1188,12 @@ export function RelatoriosTab({
                     <XAxis type="number" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="h" />
                     <YAxis type="category" dataKey="motivo" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} width={100} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="horas" name="Horas paradas" radius={[0, 4, 4, 0]}>
-                      {dadosParadas.map((_, i) => (
-                        <Cell key={i} fill={CORES[i % CORES.length]} />
-                      ))}
-                    </Bar>
+                    <Bar
+                      dataKey="horas"
+                      name="Horas paradas"
+                      fill={APPLE_CHART_COLORS.orange}
+                      radius={[0, 4, 4, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

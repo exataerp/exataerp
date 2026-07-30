@@ -55,6 +55,16 @@
   --input: 214.3 31.8% 96%;
   --ring: 211 100% 50%;
   --radius: 0.5rem;
+
+  /* Apple system colors — iOS/iPadOS/macOS, aparência clara */
+  --chart-system-blue: 0 136 255;
+  --chart-system-indigo: 97 85 245;
+  --chart-system-green: 52 199 89;
+  --chart-system-teal: 0 195 208;
+  --chart-system-orange: 255 141 40;
+  --chart-system-red: 255 56 60;
+  --chart-system-purple: 203 48 224;
+  --chart-system-gray: 142 142 147;
 }
 
 .dark {
@@ -82,6 +92,40 @@
   --border: 220 10% 20%;
   --input: 220 12% 12%;
   --ring: 212 100% 54%;
+
+  /* Apple system colors — iOS/iPadOS/macOS, aparência escura */
+  --chart-system-blue: 0 145 255;
+  --chart-system-indigo: 109 124 255;
+  --chart-system-green: 48 209 88;
+  --chart-system-teal: 0 210 224;
+  --chart-system-orange: 255 146 48;
+  --chart-system-red: 255 66 69;
+  --chart-system-purple: 219 52 242;
+  --chart-system-gray: 142 142 147;
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --chart-system-blue: 30 110 244;
+    --chart-system-indigo: 86 74 222;
+    --chart-system-green: 0 137 50;
+    --chart-system-teal: 0 129 152;
+    --chart-system-orange: 197 83 0;
+    --chart-system-red: 233 21 45;
+    --chart-system-purple: 176 47 194;
+    --chart-system-gray: 108 108 112;
+  }
+
+  .dark {
+    --chart-system-blue: 92 184 255;
+    --chart-system-indigo: 167 170 255;
+    --chart-system-green: 74 217 104;
+    --chart-system-teal: 59 221 236;
+    --chart-system-orange: 255 160 86;
+    --chart-system-red: 255 97 101;
+    --chart-system-purple: 234 141 255;
+    --chart-system-gray: 174 174 178;
+  }
 }
 
 * {
