@@ -1,0 +1,33 @@
+name: Normalize Apple report color files
+
+on:
+  push:
+    branches:
+      - codex/apple-report-colors
+    paths:
+      - .github/workflows/normalize-apple-report-colors.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/apple-report-colors
+      - name: Normalize files and remove temporary workflow
+        shell: bash
+        run: |
+          sed -i 's/\r$//' app/globals.css
+          sed -i 's/\r$//' components/relatorios-tab.tsx
+          git rm .github/workflows/normalize-apple-report-colors.yml
+      - name: Commit normalized files
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/globals.css components/relatorios-tab.tsx
+          git commit -m 'Normalize Apple report color files'
+          git push origin HEAD:codex/apple-report-colors
