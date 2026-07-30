@@ -774,7 +774,7 @@ export function RelatoriosTab({
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis dataKey="maquina" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="%" />
                     <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} radius={[4, 4, 0, 0]} unit="%" />
