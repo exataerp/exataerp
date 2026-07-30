@@ -131,6 +131,27 @@ function formatTempoCiclo(segundos: number) {
   return `${formatNum(segundos / 60, 2)} min`
 }
 
+function abreviarDescricaoEixo(descricao: string, limite = 30) {
+  return descricao.length > limite ? `${descricao.slice(0, limite - 1).trimEnd()}…` : descricao
+}
+
+function RotuloEixoProduto({ x = 0, y = 0, payload }: any) {
+  const [codigo, descricao] = String(payload?.value ?? "").split("\n")
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={10}>
+        {codigo}
+      </text>
+      {descricao && (
+        <text x={0} y={26} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={9}>
+          {abreviarDescricaoEixo(descricao)}
+        </text>
+      )}
+    </g>
+  )
+}
+
 const APPLE_CHART_COLORS = {
   blue: "rgb(var(--chart-system-blue))",
   indigo: "rgb(var(--chart-system-indigo))",
@@ -475,7 +496,13 @@ export function RelatoriosTab({
   )
   const produtosCiclo = resultadoCiclo.produtos
   const resumoCiclo = useMemo(() => calcularResumoCiclo(produtosCiclo), [produtosCiclo])
-  const dadosGraficoCiclo = useMemo(() => produtosCiclo.slice(0, 10), [produtosCiclo])
+  const dadosGraficoCiclo = useMemo(
+    () => produtosCiclo.slice(0, 10).map(produto => ({
+      ...produto,
+      rotuloProduto: produto.descricao ? `${produto.codigo}\n${produto.descricao}` : produto.codigo,
+    })),
+    [produtosCiclo],
+  )
 
   // ─── Consumo de matéria-prima ─────────────────────────────────────────────
 
@@ -949,10 +976,16 @@ export function RelatoriosTab({
                 <p className="text-[11px] text-muted-foreground mb-5">
                   Produto = soma dos ciclos por peça das operações do roteiro. O tempo bruto dos cronômetros nunca é somado diretamente.
                 </p>
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={308}>
                   <BarChart data={dadosGraficoCiclo} barGap={4}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="codigo" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                    <XAxis
+                      dataKey="rotuloProduto"
+                      height={48}
+                      interval={0}
+                      tickLine={false}
+                      tick={<RotuloEixoProduto />}
+                    />
                     <YAxis
                       tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                       tickFormatter={valor => formatTempoCiclo(Number(valor) * 60)}
