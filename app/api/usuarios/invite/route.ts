@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'E-mail é obrigatório.' }, { status: 400 })
     }
     if (!roles || !Array.isArray(roles) || roles.length === 0) {
-      return NextResponse.json({ error: 'Pelo menos um role deve ser atribuído.' }, { status: 400 })
+      return NextResponse.json({ error: 'Pelo menos um perfil de acesso deve ser atribuído.' }, { status: 400 })
     }
 
     const emailLimpo = email.trim().toLowerCase()
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
       const encontrados = (rolesValidos ?? []).map((r: any) => r.name)
       const invalidos   = roles.filter((r: string) => !encontrados.includes(r))
       return NextResponse.json(
-        { error: `Roles inválidos: ${invalidos.join(', ')}` },
+        { error: `Perfis de acesso inválidos: ${invalidos.join(', ')}` },
         { status: 400 }
       )
     }
