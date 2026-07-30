@@ -1,0 +1,32 @@
+name: Normalize cycle status colors
+
+on:
+  push:
+    branches:
+      - codex/cycle-status-colors
+    paths:
+      - .github/workflows/normalize-cycle-status-colors.yml
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/cycle-status-colors
+      - name: Normalize file and remove temporary workflow
+        shell: bash
+        run: |
+          sed -i 's/\r$//' components/relatorios-tab.tsx
+          git rm .github/workflows/normalize-cycle-status-colors.yml
+      - name: Commit normalized file
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/relatorios-tab.tsx
+          git commit -m 'Normalize cycle status colors'
+          git push origin HEAD:codex/cycle-status-colors
