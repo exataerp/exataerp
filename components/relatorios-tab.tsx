@@ -152,6 +152,24 @@ function RotuloEixoProduto({ x = 0, y = 0, payload }: any) {
   )
 }
 
+function RotuloEixoMaquina({ x = 0, y = 0, payload, nomesPorCodigo }: any) {
+  const codigo = String(payload?.value ?? "")
+  const descricao = nomesPorCodigo?.[codigo]
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={10}>
+        {codigo}
+      </text>
+      {descricao && (
+        <text x={0} y={26} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={9}>
+          {abreviarDescricaoEixo(descricao)}
+        </text>
+      )}
+    </g>
+  )
+}
+
 const APPLE_CHART_COLORS = {
   blue: "rgb(var(--chart-system-blue))",
   indigo: "rgb(var(--chart-system-indigo))",
@@ -228,6 +246,10 @@ export function RelatoriosTab({
   }, [periodo, dataInicio, dataFim])
 
   const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
+  const nomesMaquinasPorCodigo = useMemo(
+    () => Object.fromEntries(maquinas.map(maquina => [maquina.codigo, maquina.nome])),
+    [maquinas],
+  )
 
   // ─── Carga ────────────────────────────────────────────────────────────────
 
@@ -769,10 +791,16 @@ export function RelatoriosTab({
               <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
                 <h3 className="text-sm font-bold text-foreground mb-1">OEE por Máquina</h3>
                 <p className="text-[11px] text-muted-foreground mb-5">Meta de classe mundial: 85%</p>
-                <ResponsiveContainer width="100%" height={280}>
+                <ResponsiveContainer width="100%" height={308}>
                   <BarChart data={dadosOEE} barGap={4}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="maquina" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
+                    <XAxis
+                      dataKey="maquina"
+                      height={48}
+                      interval={0}
+                      tickLine={false}
+                      tick={<RotuloEixoMaquina nomesPorCodigo={nomesMaquinasPorCodigo} />}
+                    />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -837,7 +865,7 @@ export function RelatoriosTab({
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis dataKey="produto" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="taxaRefugo" name="Refugo" radius={[4, 4, 0, 0]} unit="%">
                       {dadosRefugo.slice(0, 8).map((d, i) => (
