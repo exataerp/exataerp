@@ -8,11 +8,12 @@ export function ChartTooltip({ active, payload, label, valueFormatter }: any) {
   if (!active || !payload?.length) return null
   const ponto = payload[0]?.payload
   const descricaoProduto = ponto?.descricao?.trim()
+  const labelExibido = typeof label === "string" ? label.split("\n")[0] : label
   return (
     <div className="bg-card border border-border rounded-xl shadow-lg px-4 py-3 text-xs space-y-1.5 min-w-[140px]">
-      {label !== undefined && (
+      {labelExibido !== undefined && (
         <div className="mb-1">
-          <p className="font-bold text-foreground">{label}</p>
+          <p className="font-bold text-foreground">{labelExibido}</p>
           {descricaoProduto && <p className="text-[10px] text-muted-foreground mt-0.5">{descricaoProduto}</p>}
         </div>
       )}
