@@ -950,8 +950,27 @@ export function RelatoriosTab({
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="min" />
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.indigo} radius={[4, 4, 0, 0]} unit="min" />
-                    <Bar dataKey="real" name="Realizado do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="min" />
+                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="min" />
+                    <Bar
+                      dataKey="real"
+                      name="Realizado (verde ≤ previsto; vermelho >)"
+                      fill={APPLE_CHART_COLORS.green}
+                      radius={[4, 4, 0, 0]}
+                      unit="min"
+                    >
+                      {produtosCiclo.slice(0, 10).map((produto, i) => (
+                        <Cell
+                          key={i}
+                          fill={
+                            produto.planejado > 0
+                              ? produto.real <= produto.planejado
+                                ? APPLE_CHART_COLORS.green
+                                : APPLE_CHART_COLORS.red
+                              : APPLE_CHART_COLORS.orange
+                          }
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
