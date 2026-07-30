@@ -9,6 +9,14 @@ import { EmptyState as EmptyStateBase } from "@/components/empty-state"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePicker } from "@/components/date-picker"
 import {
+  calcularCicloRealVsPlanejado,
+  calcularResumoCiclo,
+  calcularTempoProgramado,
+  normalizarNomeOperacao,
+  tempoPlanejadoEmSegundos,
+  type TurnoProgramado,
+} from "@/lib/report-calculations"
+import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, CartesianGrid, Legend, Cell
 } from "recharts"
@@ -71,7 +79,6 @@ interface Maquina {
   id: string
   nome: string
   codigo: string
-  tempo_operacional_dia?: number
 }
 
 interface Operacao {
@@ -80,6 +87,19 @@ interface Operacao {
   tempo: number
   unidade: string
   maquina_id?: string
+  produto_id?: string
+  ordem?: number
+}
+
+interface EmpresaConfigRelatorios {
+  tempo_padrao?: number
+  unidade_tempo?: string
+}
+
+interface ProdutoRelatorio {
+  id: string
+  codigo: string
+  descricao?: string
 }
 
 type Periodo = "7d" | "30d" | "90d" | "custom"
@@ -137,6 +157,11 @@ export function RelatoriosTab({
   const [maquinas, setMaquinas] = useState<Maquina[]>([])
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
   const [movimentacoes, setMovimentacoes] = useState<any[]>([])
+  const [turnos, setTurnos] = useState<TurnoProgramado[]>([])
+  const [empresaConfig, setEmpresaConfig] = useState<EmpresaConfigRelatorios | null>(null)
+  const [codigoProdutoPorId, setCodigoProdutoPorId] = useState<Record<string, string>>({})
+  const [produtos, setProdutos] = useState<ProdutoRelatorio[]>([])
+  const [produtoCicloExpandido, setProdutoCicloExpandido] = useState<string | null>(null)
 
   const [selectedMaquinaId, setSelectedMaquinaId] = useState<string>("all")
   const [selectedOpId, setSelectedOpId] = useState<string>("all")
@@ -174,7 +199,17 @@ export function RelatoriosTab({
   const loadData = async () => {
     setLoading(true)
     try {
-      const [{ data: ap }, { data: ps }, { data: op }, { data: mq }, { data: oc }, { data: mv }, { data: prods }] = await Promise.all([
+      const [
+        { data: ap },
+        { data: ps },
+        { data: op },
+        { data: mq },
+        { data: oc },
+        { data: mv },
+        { data: prods },
+        { data: config },
+        { data: turnosData },
+      ] = await Promise.all([
         supabase.from("apontamentos")
           .select("id, ordem_id, operacao_id, operacao_nome, maquina_id, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, created_at")
           .eq("empresa_id", empresaAtivaId!)
@@ -190,10 +225,11 @@ export function RelatoriosTab({
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("maquinas")
-          .select("id, nome, codigo, tempo_operacional_dia")
+          .select("id, nome, codigo")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("operacoes")
-          .select("id, nome, tempo, unidade, maquina_id"),
+          .select("id, nome, tempo, unidade, maquina_id, produto_id, ordem")
+          .eq("empresa_id", empresaAtivaId!),
         supabase.from("movimentacoes_estoque")
           .select("id, insumo_id, tipo, quantidade, custo_unitario, valor_total, created_at, insumos(codigo, descricao, unidade_medida)")
           .eq("empresa_id", empresaAtivaId!)
@@ -201,8 +237,16 @@ export function RelatoriosTab({
           .gte("created_at", inicio)
           .lte("created_at", fim),
         supabase.from("produtos")
-          .select("codigo, descricao")
+          .select("id, codigo, descricao")
           .eq("empresa_id", empresaAtivaId!),
+        supabase.from("empresas")
+          .select("tempo_padrao, unidade_tempo")
+          .eq("id", empresaAtivaId!)
+          .maybeSingle(),
+        supabase.from("turnos")
+          .select("hora_inicio, hora_fim, dias_semana, ativo")
+          .eq("empresa_id", empresaAtivaId!)
+          .eq("ativo", true),
       ])
 
       setApontamentos((ap || []) as Apontamento[])
@@ -221,12 +265,18 @@ export function RelatoriosTab({
       setMaquinas((mq || []) as Maquina[])
       setOperacoes((oc || []) as Operacao[])
       setMovimentacoes(mv || [])
+      setEmpresaConfig((config || null) as EmpresaConfigRelatorios | null)
+      setTurnos((turnosData || []) as TurnoProgramado[])
+      setProdutos((prods || []) as ProdutoRelatorio[])
 
       const mapaDesc: Record<string, string> = {}
+      const mapaCodigoPorId: Record<string, string> = {}
       for (const p of (prods || []) as any[]) {
         if (p.descricao) mapaDesc[p.codigo] = p.descricao
+        if (p.id && p.codigo) mapaCodigoPorId[p.id] = p.codigo
       }
       setMapaDescricaoProdutos(mapaDesc)
+      setCodigoProdutoPorId(mapaCodigoPorId)
     } finally {
       setLoading(false)
     }
@@ -256,7 +306,21 @@ export function RelatoriosTab({
 
   const dadosOEE = useMemo(() => {
     const operacoesMap = new Map((operacoes || []).map(o => [o.id, o.maquina_id]))
-    const diasPeriodo = Math.max(1, Math.round((new Date(fim).getTime() - new Date(inicio).getTime()) / (1000 * 60 * 60 * 24)))
+    const operacoesPorId = new Map((operacoes || []).map(o => [o.id, o]))
+    const operacoesPorNome = new Map<string, Operacao[]>()
+    for (const operacao of operacoes) {
+      const chave = normalizarNomeOperacao(operacao.nome)
+      const existentes = operacoesPorNome.get(chave) || []
+      existentes.push(operacao)
+      operacoesPorNome.set(chave, existentes)
+    }
+    const tempoProgramado = calcularTempoProgramado(
+      inicio,
+      fim,
+      turnos,
+      empresaConfig?.tempo_padrao,
+      empresaConfig?.unidade_tempo,
+    )
 
     const maquinasParaExibir = selectedMaquinaId === "all"
       ? maquinas
@@ -264,49 +328,72 @@ export function RelatoriosTab({
 
     return maquinasParaExibir.map(maq => {
       const apsMAq = filteredApontamentos.filter(a => {
+        if (a.status === "em_andamento") return false
         const effectiveMqId = a.maquina_id || (a.operacao_id ? operacoesMap.get(a.operacao_id) : null)
         return effectiveMqId === maq.id
       })
-      const pausasMaq = pausas.filter(p => apsMAq.find(a => a.id === p.apontamento_id))
-
-      const horasDisponivelDia = maq.tempo_operacional_dia || 8
-      const tempoDisponivelTotal = diasPeriodo * horasDisponivelDia * 3600
+      const tempoDisponivelTotal = tempoProgramado.totalSegundos
 
       const tempoRodando = apsMAq.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
-      
-      // Separamos apenas as paradas operacionais não planejadas (quebra, setup, falta de material).
-      // Pausas programadas (Almoço, Refeição, Fim de Turno, Troca de Turno) NÃO reduzem a disponibilidade nem o OEE.
-      const tempoPausaNaoPlanejada = pausasMaq.reduce((s, p) => {
-        if (!p.fim) return s
-        if (isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome)) return s
-        return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
-      }, 0)
-
-      const tempoEfetivo = Math.max(0, tempoRodando - tempoPausaNaoPlanejada)
       const totalProduzidas = apsMAq.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
       const totalRefugo = apsMAq.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-      const totalBoas = totalProduzidas - totalRefugo
+      const totalBoas = Math.max(0, totalProduzidas - totalRefugo)
 
-      const disponibilidade = tempoDisponivelTotal > 0 ? Math.min(100, (tempoEfetivo / tempoDisponivelTotal) * 100) : 0
+      // O cronômetro já deixa de acumular enquanto o apontamento está pausado.
+      // Subtrair as pausas novamente reduziria o tempo produtivo duas vezes.
+      const disponibilidade = tempoDisponivelTotal > 0
+        ? Math.min(100, (tempoRodando / tempoDisponivelTotal) * 100)
+        : 0
 
-      const opsMaq = operacoes.filter(o => o.maquina_id === maq.id)
-      const tempoTeorico = opsMaq.reduce((s, o) => {
-        const fator = o.unidade === "minutes" ? 60 : 1
-        return s + o.tempo * fator * totalProduzidas
-      }, 0)
+      let apontamentosSemCiclo = 0
+      let tempoTeorico = 0
+      const apontamentosComProducao = apsMAq.filter(a => (a.pecas_produzidas || 0) > 0)
+      for (const apontamento of apontamentosComProducao) {
+        let operacao = apontamento.operacao_id
+          ? operacoesPorId.get(apontamento.operacao_id)
+          : undefined
+        if (!operacao && apontamento.operacao_nome) {
+          const candidatas = operacoesPorNome.get(normalizarNomeOperacao(apontamento.operacao_nome)) || []
+          if (candidatas.length === 1) operacao = candidatas[0]
+        }
 
-      const semCiclo = opsMaq.length === 0 || tempoTeorico === 0
-      const performance = tempoEfetivo > 0 && tempoTeorico > 0
-        ? Math.min(100, (tempoTeorico / tempoEfetivo) * 100)
-        : tempoEfetivo > 0 ? 80 : (totalProduzidas > 0 ? 100 : 0)
+        const cicloPlanejado = tempoPlanejadoEmSegundos(operacao)
+        if (cicloPlanejado <= 0) {
+          apontamentosSemCiclo += 1
+          continue
+        }
+        tempoTeorico += cicloPlanejado * (apontamento.pecas_produzidas || 0)
+      }
 
-      const qualidade = totalProduzidas > 0 ? (totalBoas / totalProduzidas) * 100 : (tempoEfetivo > 0 ? 100 : 0)
-      const oee = (disponibilidade / 100) * (performance / 100) * (qualidade / 100) * 100
+      const performanceCalculavel =
+        apontamentosComProducao.length > 0 &&
+        apontamentosSemCiclo === 0 &&
+        tempoRodando > 0 &&
+        tempoTeorico > 0
+      const performance = performanceCalculavel
+        ? Math.min(100, (tempoTeorico / tempoRodando) * 100)
+        : 0
+
+      const qualidade = totalProduzidas > 0 ? Math.max(0, (totalBoas / totalProduzidas) * 100) : 0
+      const oeeCalculavel = tempoDisponivelTotal > 0 && performanceCalculavel && totalProduzidas > 0
+      const oee = oeeCalculavel
+        ? (disponibilidade / 100) * (performance / 100) * (qualidade / 100) * 100
+        : 0
 
       // Flags de dados insuficientes
       const avisos: string[] = []
-      if (!maq.tempo_operacional_dia) avisos.push("Tempo operacional/dia não cadastrado — usando 8h como padrão")
-      if (semCiclo) avisos.push("Sem roteiro vinculado à máquina — Performance estimada em 80%")
+      if (tempoProgramado.origem === "padrao_empresa") {
+        avisos.push("Sem turnos ativos — usando o tempo operacional padrão da empresa nos dias úteis")
+      }
+      if (tempoProgramado.origem === "indisponivel") {
+        avisos.push("Sem turnos ou tempo operacional padrão — Disponibilidade e OEE não calculados")
+      }
+      if (apontamentosSemCiclo > 0) {
+        avisos.push(`${apontamentosSemCiclo} apontamento(s) com produção sem ciclo padrão confiável — Performance e OEE não calculados`)
+      }
+      if (apontamentosComProducao.length === 0 && tempoRodando > 0) {
+        avisos.push("Tempo registrado sem quantidade produzida — Performance e OEE não calculados")
+      }
       if (apsMAq.length === 0) avisos.push("Sem apontamentos no período")
 
       return {
@@ -321,10 +408,12 @@ export function RelatoriosTab({
         totalRefugo,
         tempoRodando,
         avisos,
+        performanceCalculavel,
+        oeeCalculavel,
         dadosCompletos: avisos.length === 0,
       }
     }).filter(d => d.tempoRodando > 0 || d.totalProduzidas > 0)
-  }, [maquinas, filteredApontamentos, pausas, operacoes, inicio, fim, selectedMaquinaId])
+  }, [maquinas, filteredApontamentos, operacoes, inicio, fim, selectedMaquinaId, turnos, empresaConfig])
 
   /**
    * ─── Taxa de refugo por produto ───────────────────────────────────────────
@@ -366,45 +455,12 @@ export function RelatoriosTab({
    * - Tempo Real: Média PONDERADA por peça = Soma(Cronômetro Total em Segundos) / Soma(Peças Produzidas).
    * - Desvio (%): ((Ciclo Real Ponderado em Segundos - Ciclo Planejado em Segundos) / Ciclo Planejado em Segundos) * 100.
    */
-  const dadosCiclo = useMemo(() => {
-    const mapa: Record<string, { nome: string; totalCronometroSeg: number; totalPecas: number; planejadoSeg: number }> = {}
-    for (const ap of filteredApontamentos) {
-      if (!ap.operacao_nome || !ap.cronometro_total_segundos || !ap.pecas_produzidas) continue
-      const key = ap.operacao_nome
-      if (!mapa[key]) {
-        const op = operacoes.find(o => o.nome === ap.operacao_nome)
-        const planejado = op ? (op.unidade === "minutes" ? op.tempo * 60 : op.tempo) : 0
-        mapa[key] = { nome: key, totalCronometroSeg: 0, totalPecas: 0, planejadoSeg: planejado }
-      }
-      mapa[key].totalCronometroSeg += ap.cronometro_total_segundos || 0
-      mapa[key].totalPecas += ap.pecas_produzidas || 0
-    }
-    return Object.values(mapa)
-      .map(d => {
-        const realSeg = d.totalPecas > 0 ? d.totalCronometroSeg / d.totalPecas : 0
-        const realMin = realSeg / 60
-        const planejadoMin = d.planejadoSeg / 60
-        const desvio = d.planejadoSeg > 0 && d.totalPecas > 0
-          ? ((realSeg - d.planejadoSeg) / d.planejadoSeg) * 100
-          : 0
-
-        return {
-          operacao: d.nome.length > 16 ? d.nome.slice(0, 16) + "…" : d.nome,
-          nomeCompleto: d.nome,
-          totalCronometroSeg: d.totalCronometroSeg,
-          totalPecas: d.totalPecas,
-          realSeg: parseFloat(realSeg.toFixed(1)),
-          planejadoSeg: parseFloat(d.planejadoSeg.toFixed(1)),
-          real: parseFloat(realMin.toFixed(2)),
-          planejado: parseFloat(planejadoMin.toFixed(2)),
-          semPadrao: d.planejadoSeg === 0,
-          desvio: parseFloat(desvio.toFixed(1)),
-        }
-      })
-      .filter(d => d.real > 0)
-      .sort((a, b) => Math.abs(b.desvio) - Math.abs(a.desvio))
-      .slice(0, 10)
-  }, [filteredApontamentos, operacoes])
+  const resultadoCiclo = useMemo(
+    () => calcularCicloRealVsPlanejado(filteredApontamentos, operacoes, ordens, produtos),
+    [filteredApontamentos, operacoes, ordens, produtos],
+  )
+  const produtosCiclo = resultadoCiclo.produtos
+  const resumoCiclo = useMemo(() => calcularResumoCiclo(produtosCiclo), [produtosCiclo])
 
   // ─── Consumo de matéria-prima ─────────────────────────────────────────────
 
@@ -453,23 +509,56 @@ export function RelatoriosTab({
       .slice(0, 10)
   }, [pausas])
 
+  const ultimaOperacaoPorProduto = useMemo(() => {
+    const mapa: Record<string, { operacaoId: string; ordem: number }> = {}
+    for (const operacao of operacoes) {
+      if (!operacao.produto_id) continue
+      const codigoProduto = codigoProdutoPorId[operacao.produto_id]
+      if (!codigoProduto) continue
+
+      const ordemOperacao = Number(operacao.ordem) || 0
+      const atual = mapa[codigoProduto]
+      if (!atual || ordemOperacao > atual.ordem) {
+        mapa[codigoProduto] = { operacaoId: operacao.id, ordem: ordemOperacao }
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(mapa).map(([produto, valor]) => [produto, valor.operacaoId]),
+    ) as Record<string, string>
+  }, [operacoes, codigoProdutoPorId])
+
   // ─── KPIs gerais ─────────────────────────────────────────────────────────
 
   const kpis = useMemo(() => {
-    const totalProduzidas = filteredApontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalRefugo = filteredApontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const totalRetrabalho = filteredApontamentos.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
-    const totalSegundos = filteredApontamentos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
+    const apontamentosConcluidos = filteredApontamentos.filter(a => a.status !== "em_andamento")
+    const ordensPorId = new Map(ordens.map(ordem => [ordem.id, ordem]))
+    const apontamentosUltimaEtapa = apontamentosConcluidos.filter(apontamento => {
+      const ordem = ordensPorId.get(apontamento.ordem_id)
+      const ultimaOperacaoId = ordem ? ultimaOperacaoPorProduto[ordem.produto_codigo] : undefined
+      return !!ultimaOperacaoId && apontamento.operacao_id === ultimaOperacaoId
+    })
+
+    // Produção acabada: conta as peças somente na última etapa do roteiro.
+    // A base operacional continua sendo usada para refugo, pois o refugo pode
+    // ser registrado em qualquer etapa e deve usar as peças processadas.
+    const totalProduzidas = apontamentosUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+    const totalProcessadas = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
+    const totalRefugo = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
+    const totalRetrabalho = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
+    const totalSegundos = apontamentosConcluidos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
     const totalPausaSeg = pausas.reduce((s, p) => {
       if (!p.fim) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
-    const temBaseRefugo = totalProduzidas + totalRefugo > 0
-    const temBaseOEE = dadosOEE.length > 0
-    const taxaRefugo = temBaseRefugo ? (totalRefugo / (totalProduzidas + totalRefugo)) * 100 : 0
-    const oeeGeral = temBaseOEE ? dadosOEE.reduce((s, d) => s + d.oee, 0) / dadosOEE.length : 0
+    const temBaseRefugo = totalProcessadas > 0
+    const dadosOEECalculaveis = dadosOEE.filter(d => d.oeeCalculavel)
+    const temBaseOEE = dadosOEECalculaveis.length > 0
+    const taxaRefugo = temBaseRefugo ? (totalRefugo / totalProcessadas) * 100 : 0
+    const oeeGeral = temBaseOEE
+      ? dadosOEECalculaveis.reduce((s, d) => s + d.oee, 0) / dadosOEECalculaveis.length
+      : 0
     return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, temBaseRefugo, temBaseOEE, taxaRefugo, oeeGeral }
-  }, [filteredApontamentos, pausas, dadosOEE])
+  }, [filteredApontamentos, pausas, dadosOEE, ordens, ultimaOperacaoPorProduto])
 
   if (loading) {
     return (
@@ -579,7 +668,7 @@ export function RelatoriosTab({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           { label: "OEE médio geral", value: kpis.oeeGeral, hasBase: kpis.temBaseOEE, decimals: 1, suffix: "%", icon: BarChart3, color: !kpis.temBaseOEE ? "text-muted-foreground" : kpis.oeeGeral >= 85 ? "text-green-600" : kpis.oeeGeral >= 60 ? "text-amber-500" : "text-destructive" },
-          { label: "Peças produzidas", value: kpis.totalProduzidas, hasBase: true, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
+          { label: "Peças acabadas", value: kpis.totalProduzidas, hasBase: true, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
           { label: "Taxa de refugo", value: kpis.taxaRefugo, hasBase: kpis.temBaseRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: !kpis.temBaseRefugo ? "text-muted-foreground" : kpis.taxaRefugo > 5 ? "text-destructive" : "text-green-600" },
         ].map(({ label, value, hasBase, decimals, suffix, icon: Icon, color }) => (
           <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 flex items-center gap-3 shadow-sm">
@@ -670,12 +759,14 @@ export function RelatoriosTab({
                           <p className="text-[10px] text-muted-foreground">{d.maquinaNome}</p>
                         </td>
                         <td className="px-4 py-3 text-xs">{formatNum(d.disponibilidade)}%</td>
-                        <td className="px-4 py-3 text-xs">{formatNum(d.performance)}%</td>
+                        <td className="px-4 py-3 text-xs">{d.performanceCalculavel ? `${formatNum(d.performance)}%` : "N/A"}</td>
                         <td className="px-4 py-3 text-xs">{formatNum(d.qualidade)}%</td>
                         <td className="px-4 py-3">
-                          <span className={`text-xs font-bold ${d.oee >= 85 ? "text-green-600" : d.oee >= 60 ? "text-amber-500" : "text-destructive"}`}>
-                            {formatNum(d.oee)}%
-                          </span>
+                          {d.oeeCalculavel ? (
+                            <span className={`text-xs font-bold ${d.oee >= 85 ? "text-green-600" : d.oee >= 60 ? "text-amber-500" : "text-destructive"}`}>
+                              {formatNum(d.oee)}%
+                            </span>
+                          ) : <span className="text-xs text-muted-foreground">N/A</span>}
                         </td>
                         <td className="px-4 py-3 text-xs font-bold text-foreground">{d.totalBoas}</td>
                         <td className="px-4 py-3 text-xs text-destructive">{d.totalRefugo}</td>
@@ -779,101 +870,229 @@ export function RelatoriosTab({
       {/* ─── CICLO ───────────────────────────────────────────────────────────── */}
       {relatorioAtivo === "ciclo" && (
         <div className="space-y-4">
-          {dadosCiclo.length === 0 ? (
-            <EmptyState icon={Clock} label="Nenhum apontamento com operação registrada no período" />
+          {produtosCiclo.length === 0 ? (
+            <EmptyState icon={Clock} label="Nenhum produto com apontamento e roteiro no período" />
           ) : (
             <>
-              {dadosCiclo.some(d => d.semPadrao) && (
+              {produtosCiclo.some(produto => produto.semPadrao) && (
                 <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl px-4 py-3 flex items-start gap-2">
                   <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-xs font-bold text-amber-500">Operações sem tempo padrão cadastrado</p>
+                    <p className="text-xs font-bold text-amber-500">Produtos com roteiro sem tempo previsto</p>
                     <p className="text-[10px] text-amber-600 mt-0.5">
-                      {dadosCiclo.filter(d => d.semPadrao).map(d => d.nomeCompleto).join(", ")} — o desvio não pode ser calculado. Cadastre o tempo de ciclo no roteiro do produto.
+                      {produtosCiclo.filter(produto => produto.semPadrao).map(produto => produto.produto).join(", ")} — abra o produto para identificar as operações sem padrão. O desvio do produto fica indisponível até o roteiro estar completo.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {produtosCiclo.some(produto => !produto.comparavel) && (
+                <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-3 flex items-start gap-2">
+                  <Clock className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Realizado parcial</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {produtosCiclo.filter(produto => !produto.comparavel).length} produto(s) ainda não possuem medição e padrão em todas as operações. O realizado parcial é exibido, mas o desvio só aparece quando o roteiro inteiro é comparável.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {(resultadoCiclo.apontamentosInconsistentes > 0 ||
+                resultadoCiclo.apontamentosSemOperacao > 0 ||
+                resultadoCiclo.apontamentosOperacaoDivergente > 0) && (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl px-4 py-3 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-500">Apontamentos excluídos do cálculo</p>
+                    <p className="text-[10px] text-amber-600 mt-0.5">
+                      {resultadoCiclo.apontamentosInconsistentes} sem tempo ou quantidade final, {resultadoCiclo.apontamentosSemOperacao} sem operação identificada e {resultadoCiclo.apontamentosOperacaoDivergente} vinculados a uma operação de outro produto. Esses registros não entram nas médias.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {produtosCiclo.some(produto => produto.atencaoMedicao) && (
+                <div className="bg-primary/5 border border-primary/20 rounded-2xl px-4 py-3 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-foreground">Medições que merecem conferência</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Há {produtosCiclo.reduce((total, produto) => total + produto.operacoes.filter(operacao => operacao.atencaoMedicao).length, 0)} operação(ões) abaixo de 20% ou acima de 500% do previsto. Os valores permanecem no realizado, com indicação no detalhamento.
                     </p>
                   </div>
                 </div>
               )}
               <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
-                <h3 className="text-sm font-bold text-foreground mb-1">Tempo de Ciclo Real vs Planejado</h3>
-                <p className="text-[11px] text-muted-foreground mb-5">Em minutos por peça — média do período</p>
+                <h3 className="text-sm font-bold text-foreground mb-1">Ciclo Previsto vs Realizado por Produto</h3>
+                <p className="text-[11px] text-muted-foreground mb-5">
+                  Produto = soma dos ciclos por peça das operações do roteiro. O tempo bruto dos cronômetros nunca é somado diretamente.
+                </p>
                 <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={dadosCiclo} barGap={4}>
+                  <BarChart data={produtosCiclo.slice(0, 10)} barGap={4}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="operacao" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                    <XAxis dataKey="codigo" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="min" />
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="planejado" name="Planejado" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} unit="min" />
-                    <Bar dataKey="real" name="Real (média)" fill="#3b82f6" radius={[4, 4, 0, 0]} unit="min">
-                      {dadosCiclo.map((d, i) => (
-                        <Cell key={i} fill={d.desvio > 20 ? "#ef4444" : d.desvio > 0 ? "#f59e0b" : "#22c55e"} />
+                    <Bar dataKey="planejado" name="Previsto do produto" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} unit="min" />
+                    <Bar dataKey="real" name="Realizado do produto" fill="#3b82f6" radius={[4, 4, 0, 0]} unit="min">
+                      {produtosCiclo.slice(0, 10).map((produto, i) => (
+                        <Cell
+                          key={i}
+                          fill={!produto.comparavel ? "#f59e0b" : produto.desvio > 20 ? "#ef4444" : produto.desvio > 0 ? "#f59e0b" : "#22c55e"}
+                        />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
-              <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="bg-muted/30 border border-border rounded-2xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <p className="text-xs font-bold text-foreground">Cobertura do relatório</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {resumoCiclo.produtosComparaveis} de {resumoCiclo.produtosTotal} produto(s) possuem previsto e realizado em todas as operações.
+                  </p>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Clique no produto para abrir o roteiro detalhado.</p>
+              </div>
+
+              <div className="bg-card border border-border rounded-2xl shadow-sm overflow-x-auto">
+                <table className="w-full min-w-[880px] text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      {["Operação", "Planejado", "Real (média ponderada)", "Desvio"].map(h => (
+                      {["Produto", "Cobertura do roteiro", "Previsto", "Realizado", "Desvio", "Detalhes"].map(h => (
                         <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {dadosCiclo.map(d => (
-                      <tr key={d.operacao} className="hover:bg-muted/20 transition-colors">
-                        <td className="px-4 py-3 text-xs font-bold text-foreground">{d.nomeCompleto}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{d.planejado > 0 ? `${formatNum(d.planejado, 2)} min` : "—"}</td>
-                        <td className="px-4 py-3 text-xs text-foreground font-bold">{formatNum(d.real, 2)} min</td>
-                        <td className="px-4 py-3">
-                          {d.planejado > 0 ? (
-                            <span className={`text-xs font-bold ${d.desvio > 20 ? "text-destructive" : d.desvio > 0 ? "text-amber-500" : "text-green-600"}`}>
-                              {d.desvio > 0 ? "+" : ""}{formatNum(d.desvio)}%
-                            </span>
-                          ) : <span className="text-xs text-muted-foreground">Sem padrão</span>}
-                        </td>
-                      </tr>
-                    ))}
+                    {produtosCiclo.map(produto => {
+                      const expandido = produtoCicloExpandido === produto.id
+                      return (
+                        <React.Fragment key={produto.id}>
+                          <tr className="hover:bg-muted/20 transition-colors">
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => setProdutoCicloExpandido(expandido ? null : produto.id)}
+                                className="w-full flex items-center gap-2 text-left"
+                                aria-expanded={expandido}
+                              >
+                                <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${expandido ? "rotate-180" : ""}`} />
+                                <span>
+                                  <span className="block text-xs font-bold text-foreground">{produto.produto}</span>
+                                  {produto.ordens && <span className="block text-[10px] text-muted-foreground mt-0.5">OP {produto.ordens}</span>}
+                                </span>
+                              </button>
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="text-xs font-bold text-foreground">{produto.operacoesMedidas}/{produto.operacoesTotal} operações medidas</p>
+                              <span className={`inline-flex mt-1 text-[9px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 ${
+                                produto.comparavel
+                                  ? "text-green-600 bg-green-500/10"
+                                  : produto.operacoesMedidas > 0
+                                    ? "text-amber-600 bg-amber-500/10"
+                                    : "text-muted-foreground bg-muted"
+                              }`}>
+                                {produto.comparavel ? "Completo" : produto.operacoesMedidas > 0 ? "Parcial" : "Sem medição"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground">
+                              {produto.planejadoSeg > 0 ? `${formatNum(produto.planejado, 2)} min` : "Sem padrão"}
+                            </td>
+                            <td className="px-4 py-3">
+                              {produto.operacoesMedidas > 0 ? (
+                                <>
+                                  <p className="text-xs font-bold text-foreground">{formatNum(produto.real, 2)} min</p>
+                                  {!produto.comparavel && <p className="text-[10px] text-amber-600 mt-0.5">Somatório parcial</p>}
+                                </>
+                              ) : <span className="text-xs text-muted-foreground">Sem medição</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              {produto.comparavel ? (
+                                <span className={`text-xs font-bold ${produto.desvio > 20 ? "text-destructive" : produto.desvio > 0 ? "text-amber-500" : "text-green-600"}`}>
+                                  {produto.desvio > 0 ? "+" : ""}{formatNum(produto.desvio)}%
+                                </span>
+                              ) : <span className="text-xs text-muted-foreground">Aguardando roteiro completo</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => setProdutoCicloExpandido(expandido ? null : produto.id)}
+                                className="text-xs font-bold text-primary hover:underline"
+                              >
+                                {expandido ? "Ocultar operações" : "Ver operações"}
+                              </button>
+                            </td>
+                          </tr>
+
+                          {expandido && (
+                            <tr>
+                              <td colSpan={6} className="p-0 bg-muted/15">
+                                <div className="px-6 py-4">
+                                  <div className="flex items-start justify-between gap-3 mb-3">
+                                    <div>
+                                      <p className="text-xs font-bold text-foreground">Operações do roteiro</p>
+                                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                                        Realizado de cada operação = tempo registrado ÷ peças registradas.
+                                      </p>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground">{produto.totalApontamentos} apontamento(s) válidos</p>
+                                  </div>
+                                  <div className="overflow-x-auto rounded-xl border border-border bg-card">
+                                    <table className="w-full min-w-[760px] text-sm">
+                                      <thead>
+                                        <tr className="border-b border-border bg-muted/30">
+                                          {["Etapa", "Operação", "Base da medição", "Previsto", "Realizado", "Desvio"].map(h => (
+                                            <th key={h} className="text-left text-[9px] font-bold text-muted-foreground uppercase tracking-wider px-3 py-2">{h}</th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-border">
+                                        {produto.operacoes.map(operacao => (
+                                          <tr key={operacao.id}>
+                                            <td className="px-3 py-2 text-xs text-muted-foreground">{operacao.ordem || "—"}</td>
+                                            <td className="px-3 py-2">
+                                              <p className="text-xs font-bold text-foreground">{operacao.nome}</p>
+                                              {operacao.atencaoMedicao && (
+                                                <span className="inline-flex mt-1 text-[9px] font-bold text-primary bg-primary/10 rounded-full px-2 py-0.5">
+                                                  Conferir medição
+                                                </span>
+                                              )}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                              {operacao.temMedicao ? (
+                                                <>
+                                                  <p className="text-xs text-foreground">{operacao.totalPecas} peças</p>
+                                                  <p className="text-[10px] text-muted-foreground">{operacao.totalApontamentos} apontamento(s)</p>
+                                                </>
+                                              ) : <span className="text-xs text-muted-foreground">Sem medição</span>}
+                                            </td>
+                                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                                              {operacao.planejadoSeg > 0 ? `${formatNum(operacao.planejado, 2)} min` : "Sem padrão"}
+                                            </td>
+                                            <td className="px-3 py-2 text-xs font-bold text-foreground">
+                                              {operacao.temMedicao ? `${formatNum(operacao.real, 2)} min` : "—"}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                              {operacao.comparavel ? (
+                                                <span className={`text-xs font-bold ${operacao.desvio > 20 ? "text-destructive" : operacao.desvio > 0 ? "text-amber-500" : "text-green-600"}`}>
+                                                  {operacao.desvio > 0 ? "+" : ""}{formatNum(operacao.desvio)}%
+                                                </span>
+                                              ) : <span className="text-xs text-muted-foreground">{operacao.semPadrao ? "Sem padrão" : "Sem medição"}</span>}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
                   </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
-                      <td className="px-4 py-3 text-muted-foreground uppercase tracking-wider">Média Ponderada Geral</td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {(() => {
-                          const comPlan = dadosCiclo.filter(d => d.planejado > 0)
-                          const medPlan = comPlan.length > 0 ? comPlan.reduce((s, d) => s + d.planejado, 0) / comPlan.length : 0
-                          return medPlan > 0 ? `${formatNum(medPlan, 2)} min` : "—"
-                        })()}
-                      </td>
-                      <td className="px-4 py-3 text-foreground">
-                        {(() => {
-                          const totSeg = dadosCiclo.reduce((s, d) => s + d.totalCronometroSeg, 0)
-                          const totPec = dadosCiclo.reduce((s, d) => s + d.totalPecas, 0)
-                          const medRealSeg = totPec > 0 ? totSeg / totPec : 0
-                          return `${formatNum(medRealSeg / 60, 2)} min`
-                        })()}
-                      </td>
-                      <td className="px-4 py-3">
-                        {(() => {
-                          const comPlan = dadosCiclo.filter(d => d.planejado > 0)
-                          const medPlan = comPlan.length > 0 ? comPlan.reduce((s, d) => s + d.planejadoSeg, 0) / comPlan.length : 0
-                          const totSeg = comPlan.reduce((s, d) => s + d.totalCronometroSeg, 0)
-                          const totPec = comPlan.reduce((s, d) => s + d.totalPecas, 0)
-                          const medRealSeg = totPec > 0 ? totSeg / totPec : 0
-                          const desvioGeral = medPlan > 0 && totPec > 0 ? ((medRealSeg - medPlan) / medPlan) * 100 : 0
-                          return medPlan > 0 ? (
-                            <span className={desvioGeral > 20 ? "text-destructive" : desvioGeral > 0 ? "text-amber-500" : "text-green-600"}>
-                              {desvioGeral > 0 ? "+" : ""}{formatNum(desvioGeral)}%
-                            </span>
-                          ) : "—"
-                        })()}
-                      </td>
-                    </tr>
-                  </tfoot>
                 </table>
               </div>
             </>

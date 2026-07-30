@@ -329,24 +329,52 @@ export default function ExataApp() {
     const parsedRefugo = parseFloat(metaRefugo)
     const parsedProd = parseFloat(metaProdutividade)
 
-    const valOEE = isNaN(parsedOEE) ? 85 : parsedOEE
-    const valRefugo = isNaN(parsedRefugo) ? 2 : parsedRefugo
-    const valProd = isNaN(parsedProd) ? 90 : parsedProd
-
-    const payload = {
-      meta_oee: valOEE,
-      meta_refugo: valRefugo,
-      meta_produtividade: valProd,
+    if (
+      !Number.isFinite(parsedOEE) ||
+      !Number.isFinite(parsedRefugo) ||
+      !Number.isFinite(parsedProd) ||
+      [parsedOEE, parsedRefugo, parsedProd].some((valor) => valor < 0 || valor > 100)
+    ) {
+      toast({
+        title: "Metas inválidas",
+        description: "Informe percentuais entre 0 e 100.",
+        variant: "destructive",
+      })
+      setIsSavingMetas(false)
+      return
     }
 
-    const { error } = await supabase
-      .from("empresas")
-      .update(payload)
-      .eq("id", empresaAtivaId)
+    const payload = {
+      meta_oee: parsedOEE,
+      meta_refugo: parsedRefugo,
+      meta_produtividade: parsedProd,
+    }
 
-    if (error) {
-      toast({ title: "Erro ao salvar metas", description: error.message, variant: "destructive" })
-    } else {
+    try {
+      const { data: authData } = await supabase.auth.getSession()
+      const token = authData.session?.access_token
+
+      if (!token) {
+        throw new Error("Sessão expirada. Entre novamente no sistema.")
+      }
+
+      const response = await fetch("/api/empresa/configuracoes", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+      const result = await response.json()
+
+      if (!response.ok || !result.empresa) {
+        throw new Error(result.error || "Não foi possível confirmar o salvamento das metas.")
+      }
+
+      const valOEE = Number(result.empresa.meta_oee)
+      const valRefugo = Number(result.empresa.meta_refugo)
+      const valProd = Number(result.empresa.meta_produtividade)
       const cacheKeyMetas = `exata_metas_dados_${empresaAtivaId}`
       localStorage.setItem(cacheKeyMetas, JSON.stringify({
         meta_oee: valOEE.toString(),
@@ -357,8 +385,16 @@ export default function ExataApp() {
       setMetaRefugo(valRefugo.toString())
       setMetaProdutividade(valProd.toString())
       toast({ title: "✅ Metas salvas" })
+    } catch (error) {
+      console.error("Erro ao salvar metas:", error)
+      toast({
+        title: "Erro ao salvar metas",
+        description: error instanceof Error ? error.message : "Não foi possível salvar as metas.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingMetas(false)
     }
-    setIsSavingMetas(false)
   }
 
   const carregarTurnos = async (empId: string) => {

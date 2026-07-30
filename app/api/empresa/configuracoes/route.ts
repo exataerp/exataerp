@@ -38,7 +38,7 @@ function responderErro(error: unknown) {
       error:
         error instanceof Error
           ? error.message
-          : "Erro inesperado ao carregar as configurações.",
+          : "Erro inesperado ao processar as configurações.",
     },
     { status: 500 },
   )
@@ -67,28 +67,64 @@ export async function PATCH(request: Request) {
   try {
     const empresaId = await obterEmpresaDoGestor(request)
     const body = await request.json()
-    const unidadeTempo = String(body.unidade_tempo ?? "hours")
-    const funcionarios = String(body.num_funcionarios ?? "").trim()
-    const tempoInformado =
-      body.tempo_padrao === null || body.tempo_padrao === ""
-        ? null
-        : Number(body.tempo_padrao)
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json(
+        { error: "Formato de configurações inválido." },
+        { status: 400 },
+      )
+    }
+    const temCampo = (campo: string) =>
+      Object.prototype.hasOwnProperty.call(body, campo)
+    const atualizacoes: Record<string, string | number | null> = {}
 
-    if (!["hours", "minutes", "seconds"].includes(unidadeTempo)) {
-      return NextResponse.json({ error: "Unidade de tempo inválida." }, { status: 400 })
+    if (temCampo("num_funcionarios")) {
+      const funcionarios = String(body.num_funcionarios ?? "").trim()
+      atualizacoes.num_funcionarios = funcionarios || null
     }
 
-    if (tempoInformado !== null && (!Number.isFinite(tempoInformado) || tempoInformado < 0)) {
-      return NextResponse.json({ error: "Tempo operacional inválido." }, { status: 400 })
+    if (temCampo("unidade_tempo")) {
+      const unidadeTempo = String(body.unidade_tempo)
+      if (!["hours", "minutes", "seconds"].includes(unidadeTempo)) {
+        return NextResponse.json({ error: "Unidade de tempo inválida." }, { status: 400 })
+      }
+      atualizacoes.unidade_tempo = unidadeTempo
+    }
+
+    if (temCampo("tempo_padrao")) {
+      const tempoInformado =
+        body.tempo_padrao === null || body.tempo_padrao === ""
+          ? null
+          : Number(body.tempo_padrao)
+
+      if (tempoInformado !== null && (!Number.isFinite(tempoInformado) || tempoInformado < 0)) {
+        return NextResponse.json({ error: "Tempo operacional inválido." }, { status: 400 })
+      }
+      atualizacoes.tempo_padrao = tempoInformado
+    }
+
+    for (const campo of ["meta_oee", "meta_refugo", "meta_produtividade"] as const) {
+      if (!temCampo(campo)) continue
+
+      const valor = Number(body[campo])
+      if (!Number.isFinite(valor) || valor < 0 || valor > 100) {
+        return NextResponse.json(
+          { error: `A meta ${campo.replace("meta_", "")} deve estar entre 0 e 100%.` },
+          { status: 400 },
+        )
+      }
+      atualizacoes[campo] = valor
+    }
+
+    if (Object.keys(atualizacoes).length === 0) {
+      return NextResponse.json(
+        { error: "Nenhuma configuração válida foi informada." },
+        { status: 400 },
+      )
     }
 
     const { data, error } = await supabaseAdmin
       .from("empresas")
-      .update({
-        num_funcionarios: funcionarios || null,
-        tempo_padrao: tempoInformado,
-        unidade_tempo: unidadeTempo,
-      })
+      .update(atualizacoes)
       .eq("id", empresaId)
       .select(CAMPOS_CONFIGURACAO)
       .single()

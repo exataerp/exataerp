@@ -18,10 +18,16 @@ interface Manutencao {
   descricao: string
 }
 
+interface Maquina {
+  id: string
+  codigo: string
+  nome: string
+}
+
 export function ManutencaoTab({ user, empresaAtivaId }: { user: any, empresaAtivaId: string | null }) {
   const { toast } = useToast()
   const [registros, setRegistros] = useState<Manutencao[]>([])
-  const [maquinas, setMaquinas] = useState<any[]>([])
+  const [maquinas, setMaquinas] = useState<Maquina[]>([])
   const [loading, setLoading] = useState(true)
 
   const [maquinaId, setMaquinaId] = useState("")
@@ -38,24 +44,55 @@ export function ManutencaoTab({ user, empresaAtivaId }: { user: any, empresaAtiv
   const loadData = async () => {
     if (!empresaAtivaId) return
 
+    setLoading(true)
     try {
       const [{ data: maqData, error: maqError }, { data: manDataRaw, error: manError }] = await Promise.all([
-        supabase.from("maquinas").select("*").eq("empresa_id", empresaAtivaId),
-        supabase.from("manutencao").select("*, maquinas(nome, codigo)").eq("empresa_id", empresaAtivaId).order("data_programada")
+        supabase
+          .from("maquinas")
+          .select("id, codigo, nome")
+          .eq("empresa_id", empresaAtivaId)
+          .order("codigo"),
+        supabase
+          .from("manutencao")
+          .select("id, maquina_id, tipo, status, data_programada, descricao")
+          .eq("empresa_id", empresaAtivaId)
+          .order("data_programada"),
       ])
 
-      if (maqError) throw maqError
-      if (manError) throw manError
+      if (maqError) {
+        console.error("Erro ao carregar equipamentos da manutenção:", maqError)
+        setMaquinas([])
+      } else {
+        setMaquinas((maqData || []) as Maquina[])
+      }
 
-      const manData = (manDataRaw || []).map((m: any) => ({
-        ...m,
-        maquina_nome: m.maquinas?.nome,
-        maquina_codigo: m.maquinas?.codigo,
-      }))
+      if (manError) {
+        console.error("Erro ao carregar agenda de manutenção:", manError)
+        setRegistros([])
+      } else {
+        const maquinasPorId = new Map(
+          ((maqData || []) as Maquina[]).map((maquina) => [maquina.id, maquina]),
+        )
+        const manData = (manDataRaw || []).map((manutencao) => {
+          const maquina = maquinasPorId.get(manutencao.maquina_id)
+          return {
+            ...manutencao,
+            maquina_nome: maquina?.nome ?? "Equipamento não encontrado",
+            maquina_codigo: maquina?.codigo ?? "—",
+          } as Manutencao
+        })
+        setRegistros(manData)
+      }
 
-      setMaquinas(maqData || [])
-      setRegistros(manData)
+      if (maqError || manError) {
+        toast({
+          title: "Falha ao carregar manutenção",
+          description: maqError?.message ?? manError?.message,
+          variant: "destructive",
+        })
+      }
     } catch (e) {
+      console.error("Erro inesperado ao carregar manutenção:", e)
       toast({ title: "Erro", description: "Falha ao carregar dados.", variant: "destructive" })
     } finally {
       setLoading(false)
@@ -120,6 +157,10 @@ export function ManutencaoTab({ user, empresaAtivaId }: { user: any, empresaAtiv
                 <SelectValue placeholder="Selecione o equipamento" />
               </SelectTrigger>
               <SelectContent>
+                {loading && <SelectItem value="carregando" disabled>Carregando equipamentos...</SelectItem>}
+                {!loading && maquinas.length === 0 && (
+                  <SelectItem value="sem-equipamentos" disabled>Nenhum equipamento disponível</SelectItem>
+                )}
                 {maquinas.map(m => (
                   <SelectItem key={m.id} value={m.id}>{m.codigo} - {m.nome}</SelectItem>
                 ))}
@@ -148,6 +189,16 @@ export function ManutencaoTab({ user, empresaAtivaId }: { user: any, empresaAtiv
       <div className="xl:w-[65%] bg-card rounded-3xl border border-border p-6 shadow-sm">
         <h3 className="text-lg font-bold text-foreground mb-6">Agenda de Manutenção</h3>
         <div className="space-y-3">
+          {loading && (
+            <p className="py-10 text-center text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">
+              Carregando agenda...
+            </p>
+          )}
+          {!loading && registros.length === 0 && (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Nenhuma manutenção agendada.
+            </p>
+          )}
           {registros.map(m => (
             <div key={m.id} className="p-4 border border-border rounded-2xl flex items-center justify-between gap-4">
               <div className="flex gap-4 items-center">

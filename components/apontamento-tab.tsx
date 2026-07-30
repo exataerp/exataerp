@@ -86,9 +86,18 @@ function formatarTempo(segundos: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
 }
 
-function badgeStatus(pct: number, fechada?: boolean) {
-  if (fechada || pct >= 100) return { label: "Encerrada", classes: "bg-blue-500/10 text-blue-600 border border-blue-500/20" }
-  if (pct > 0) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
+function badgeStatus({
+  fechada,
+  emAndamento,
+  temApontamento,
+}: {
+  fechada: boolean
+  emAndamento: boolean
+  temApontamento: boolean
+}) {
+  if (fechada) return { label: "Encerrada", classes: "bg-blue-500/10 text-blue-600 border border-blue-500/20" }
+  if (emAndamento) return { label: "Em andamento", classes: "bg-primary/10 text-primary border border-primary/20" }
+  if (temApontamento) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
   return { label: "Agendada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
 }
 
@@ -328,7 +337,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     try {
       const [opsRes, apRes, gRes, sRes, prodRes] = await Promise.all([
         supabase.from("ordens_producao")
-          .select("id, numero_op, produto_codigo, quantidade, data_programacao")
+          .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!)
           .order("data_programacao", { ascending: true }),
         supabase.from("apontamentos")
@@ -519,21 +528,47 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
     if (error) { toast({ title: "Erro ao iniciar", description: error.message, variant: "destructive" }); return }
 
+    const { data: ordemAtualizada, error: statusError } = await supabase
+      .from("ordens_producao")
+      .update({ status: "em_andamento" })
+      .eq("id", ordemSelecionadaId)
+      .eq("empresa_id", empresaAtivaId!)
+      .select("id, status")
+      .single()
+
+    if (statusError) {
+      console.error("Erro ao sincronizar status da OP iniciada:", statusError)
+    }
+
     const novaSessao: SessaoAtiva = {
       apontamentoId: data.id,
       ordemId: ordemSelecionadaId,
       operacaoId: operacaoSelecionadaId,
       operacaoNome: op.nome,
-      maquinaId: op.maquina_id,
+      maquinaId: maquinaIdDefinitiva ?? undefined,
       maquinaNome: op.maquina_nome ? `${op.maquina_codigo} - ${op.maquina_nome}` : "Manual",
       inicioTimestamp: Date.now(),
       segundosAcumulados: 0,
       cicloPlanejadoSeg,
     }
+    setApontamentos((atuais) => [data as Apontamento, ...atuais])
+    if (ordemAtualizada) {
+      setOrdens((atuais) => atuais.map((ordem) =>
+        ordem.id === ordemSelecionadaId
+          ? { ...ordem, status: ordemAtualizada.status }
+          : ordem,
+      ))
+    }
     salvarSessoes([...sessoes, novaSessao])
     setOrdemSelecionadaId("")
     setOperacaoSelecionadaId("")
-    toast({ title: "▶ Apontamento iniciado", description: op.nome })
+    toast({
+      title: statusError ? "Apontamento iniciado com ressalva" : "▶ Apontamento iniciado",
+      description: statusError
+        ? `${op.nome}. Não foi possível sincronizar o status da OP.`
+        : op.nome,
+      variant: statusError ? "destructive" : undefined,
+    })
   }
 
   // ─── Pausar ────────────────────────────────────────────────────────────────
@@ -813,6 +848,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       const totalRetrabalho = aps.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
       const totalSegundos = aps.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
       let pct = op.quantidade > 0 ? Math.min(100, (totalProduzidas / op.quantidade) * 100) : 0
+      const emAndamento = aps.some(a => a.status === "em_andamento")
+      const temApontamento = aps.length > 0
       
       // A OP só é fechada se o encerramento tiver ocorrido na ÚLTIMA ETAPA do roteiro ou status estritamente encerrada
       const foiEncerradaNaUltimaEtapa = ultimaOperacaoId
@@ -826,7 +863,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         pct = Math.min(100, (totalProduzidas / op.quantidade) * 100)
       }
       
-      return { op, aps, totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, pct, fechada }
+      return {
+        op,
+        aps,
+        totalProduzidas,
+        totalRefugo,
+        totalRetrabalho,
+        totalSegundos,
+        pct,
+        fechada,
+        emAndamento,
+        temApontamento,
+      }
     })
   }, [ordens, apontamentos, ultimaOperacaoPorProduto])
 
@@ -1294,7 +1342,11 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               )}
 
               {resumosFiltrados.map(resumo => {
-                const badge = badgeStatus(resumo.pct, resumo.fechada)
+                const badge = badgeStatus({
+                  fechada: resumo.fechada,
+                  emAndamento: resumo.emAndamento,
+                  temApontamento: resumo.temApontamento,
+                })
                 const expandida = opExpandida === resumo.op.id
 
                 return (
