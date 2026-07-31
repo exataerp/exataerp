@@ -183,7 +183,7 @@ const APPLE_CHART_COLORS = {
 
 const OEE_LEGEND_ITEMS = [
   { label: "Disponibilidade", color: APPLE_CHART_COLORS.blue },
-  { label: "OEE", color: APPLE_CHART_COLORS.teal },
+  { label: "OEE", color: APPLE_CHART_COLORS.gray },
   { label: "Performance", color: APPLE_CHART_COLORS.indigo },
   { label: "Qualidade", color: APPLE_CHART_COLORS.green },
 ] as const
@@ -860,10 +860,10 @@ export function RelatoriosTab({
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend content={<LegendaOEE />} />
-                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.teal} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
