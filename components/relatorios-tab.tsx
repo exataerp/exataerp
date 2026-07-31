@@ -190,7 +190,7 @@ const OEE_LEGEND_ITEMS = [
 
 const REFUGO_LEGEND_ITEMS = [
   { label: "Refugo", color: APPLE_CHART_COLORS.red },
-  { label: "Retrabalho", color: APPLE_CHART_COLORS.gray },
+  { label: "Retrabalho", color: APPLE_CHART_COLORS.orange },
 ] as const
 
 function LegendaOEE() {
@@ -810,7 +810,7 @@ export function RelatoriosTab({
         {[
           { label: "OEE médio geral", value: kpis.oeeGeral, hasBase: kpis.temBaseOEE, decimals: 1, suffix: "%", icon: BarChart3, color: !kpis.temBaseOEE ? "text-muted-foreground" : kpis.oeeGeral >= 85 ? "text-green-600" : kpis.oeeGeral >= 60 ? "text-amber-500" : "text-destructive" },
           { label: "Peças acabadas", value: kpis.totalProduzidas, hasBase: true, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
-          { label: "Taxa de refugo", value: kpis.taxaRefugo, hasBase: kpis.temBaseRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: !kpis.temBaseRefugo ? "text-muted-foreground" : kpis.taxaRefugo > 5 ? "text-destructive" : "text-green-600" },
+          { label: "Taxa de refugo", value: kpis.taxaRefugo, hasBase: kpis.temBaseRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: !kpis.temBaseRefugo ? "text-muted-foreground" : "text-destructive" },
         ].map(({ label, value, hasBase, decimals, suffix, icon: Icon, color }) => (
           <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 flex items-center gap-3 shadow-sm">
             <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-muted flex-shrink-0">
@@ -945,7 +945,7 @@ export function RelatoriosTab({
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend content={<LegendaRefugo />} />
                     <Bar dataKey="taxaRefugo" name="Refugo" fill={APPLE_CHART_COLORS.red} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.orange} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -967,7 +967,7 @@ export function RelatoriosTab({
                         <td className="px-4 py-3 text-xs text-destructive font-bold">{d.refugo}</td>
                         <td className="px-4 py-3 text-xs text-amber-500 font-bold">{d.retrabalho}</td>
                         <td className="px-4 py-3">
-                          <span className={`text-xs font-bold ${d.taxaRefugo > 5 ? "text-destructive" : d.taxaRefugo > 2 ? "text-amber-500" : "text-green-600"}`}>
+                          <span className="text-xs font-bold text-destructive">
                             {formatNum(d.taxaRefugo)}%
                           </span>
                         </td>
@@ -987,7 +987,7 @@ export function RelatoriosTab({
                           const totRef = dadosRefugo.reduce((s, d) => s + d.refugo, 0)
                           const taxa = totProd > 0 ? (totRef / totProd) * 100 : 0
                           return (
-                            <span className={taxa > 5 ? "text-destructive" : taxa > 2 ? "text-amber-500" : "text-green-600"}>
+                            <span className="text-destructive">
                               {formatNum(taxa)}%
                             </span>
                           )
