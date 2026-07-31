@@ -188,6 +188,11 @@ const OEE_LEGEND_ITEMS = [
   { label: "Qualidade", color: APPLE_CHART_COLORS.green },
 ] as const
 
+const REFUGO_LEGEND_ITEMS = [
+  { label: "Refugo", color: APPLE_CHART_COLORS.green },
+  { label: "Retrabalho", color: APPLE_CHART_COLORS.gray },
+] as const
+
 function LegendaOEE() {
   return (
     <div
@@ -195,6 +200,22 @@ function LegendaOEE() {
       aria-label="Legenda dos indicadores de OEE"
     >
       {OEE_LEGEND_ITEMS.map(item => (
+        <span key={item.label} className="inline-flex items-center gap-2" style={{ color: item.color }}>
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function LegendaRefugo() {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 pt-2 text-[11px]"
+      aria-label="Legenda das taxas de refugo e retrabalho"
+    >
+      {REFUGO_LEGEND_ITEMS.map(item => (
         <span key={item.label} className="inline-flex items-center gap-2" style={{ color: item.color }}>
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
           {item.label}
@@ -916,14 +937,14 @@ export function RelatoriosTab({
               <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
                 <h3 className="text-sm font-bold text-foreground mb-1">Taxa de Refugo por Produto</h3>
                 <p className="text-[11px] text-muted-foreground mb-5">Meta recomendada: abaixo de 2%</p>
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={dadosRefugo.slice(0, 8)}>
+                <ResponsiveContainer width="100%" height={290}>
+                  <BarChart data={dadosRefugo.slice(0, 8)} barCategoryGap="42%" barGap={8}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis dataKey="produto" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="taxaRefugo" name="Refugo" radius={[4, 4, 0, 0]} unit="%">
+                    <Legend content={<LegendaRefugo />} />
+                    <Bar dataKey="taxaRefugo" name="Refugo" fill={APPLE_CHART_COLORS.green} barSize={30} radius={[8, 8, 4, 4]} unit="%">
                       {dadosRefugo.slice(0, 8).map((d, i) => (
                         <Cell
                           key={i}
@@ -937,7 +958,7 @@ export function RelatoriosTab({
                         />
                       ))}
                     </Bar>
-                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.purple} radius={[4, 4, 0, 0]} unit="%" />
+                    <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
