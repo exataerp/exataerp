@@ -181,6 +181,33 @@ const APPLE_CHART_COLORS = {
   gray: "rgb(var(--chart-system-gray))",
 } as const
 
+function LegendaCiclo() {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 pt-2 text-[11px]"
+      aria-label="Legenda do ciclo previsto e realizado"
+    >
+      <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: APPLE_CHART_COLORS.gray }}
+        />
+        Previsto do produto
+      </span>
+      <span className="inline-flex flex-wrap items-center justify-center gap-x-1 text-muted-foreground">
+        <span
+          className="mr-1 h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: APPLE_CHART_COLORS.green }}
+        />
+        <span>Realizado</span>
+        <span className="font-semibold text-green-600 dark:text-green-400">(verde ≤)</span>
+        <span>previsto;</span>
+        <span className="font-semibold text-red-600 dark:text-red-400">(vermelho &gt;)</span>
+      </span>
+    </div>
+  )
+}
+
 // ─── Tooltip customizado ──────────────────────────────────────────────────────
 
 // (tooltip dos gráficos agora vem de @/components/chart-tooltip)
@@ -197,7 +224,7 @@ export function RelatoriosTab({
   onChangeRelatorio?: (id: RelatoId) => void
 }) {
   const [loading, setLoading] = useState(true)
-  const [periodo, setPeriodo] = useState<Periodo>("30d")
+  const [periodo, setPeriodo] = useState<Periodo>("7d")
   const [dataInicio, setDataInicio] = useState("")
   const [dataFim, setDataFim] = useState("")
   const [relatorioAtivoInterno, setRelatorioAtivoInterno] = useState<RelatoId>("oee")
@@ -1005,7 +1032,7 @@ export function RelatoriosTab({
                   Produto = soma dos ciclos por peça das operações do roteiro. O tempo bruto dos cronômetros nunca é somado diretamente.
                 </p>
                 <ResponsiveContainer width="100%" height={308}>
-                  <BarChart data={dadosGraficoCiclo} barGap={4}>
+                  <BarChart data={dadosGraficoCiclo} barCategoryGap="36%" barGap={10}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis
                       dataKey="rotuloProduto"
@@ -1029,13 +1056,20 @@ export function RelatoriosTab({
                       }}
                       content={<ChartTooltip valueFormatter={(valor: number) => formatTempoCiclo(Number(valor) * 60)} />}
                     />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="planejado" name="Previsto do produto" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} />
+                    <Legend content={<LegendaCiclo />} />
+                    <Bar
+                      dataKey="planejado"
+                      name="Previsto do produto"
+                      fill={APPLE_CHART_COLORS.gray}
+                      maxBarSize={72}
+                      radius={[8, 8, 4, 4]}
+                    />
                     <Bar
                       dataKey="real"
-                      name="Realizado (verde ≤ previsto; vermelho >)"
+                      name="Realizado"
                       fill={APPLE_CHART_COLORS.green}
-                      radius={[4, 4, 0, 0]}
+                      maxBarSize={72}
+                      radius={[8, 8, 4, 4]}
                     >
                       {dadosGraficoCiclo.map((produto, i) => (
                         <Cell
