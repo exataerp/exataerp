@@ -189,7 +189,7 @@ const OEE_LEGEND_ITEMS = [
 ] as const
 
 const REFUGO_LEGEND_ITEMS = [
-  { label: "Refugo", color: APPLE_CHART_COLORS.green },
+  { label: "Refugo", color: APPLE_CHART_COLORS.red },
   { label: "Retrabalho", color: APPLE_CHART_COLORS.gray },
 ] as const
 
@@ -944,20 +944,7 @@ export function RelatoriosTab({
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend content={<LegendaRefugo />} />
-                    <Bar dataKey="taxaRefugo" name="Refugo" fill={APPLE_CHART_COLORS.green} barSize={30} radius={[8, 8, 4, 4]} unit="%">
-                      {dadosRefugo.slice(0, 8).map((d, i) => (
-                        <Cell
-                          key={i}
-                          fill={
-                            d.taxaRefugo > 5
-                              ? APPLE_CHART_COLORS.red
-                              : d.taxaRefugo > 2
-                                ? APPLE_CHART_COLORS.orange
-                                : APPLE_CHART_COLORS.green
-                          }
-                        />
-                      ))}
-                    </Bar>
+                    <Bar dataKey="taxaRefugo" name="Refugo" fill={APPLE_CHART_COLORS.red} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                     <Bar dataKey="taxaRetrabalho" name="Retrabalho" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
