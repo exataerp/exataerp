@@ -8,7 +8,7 @@
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card) / var(--card-alpha));
   --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover) / var(--card-alpha));
+  --color-popover: hsl(var(--popover) / var(--popover-alpha));
   --color-popover-foreground: hsl(var(--popover-foreground));
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
@@ -37,7 +37,18 @@
   --card-foreground: 222.2 84% 4.9%;
   --popover: 0 0% 100%;
   --popover-foreground: 222.2 84% 4.9%;
-  --card-alpha: 0.95;
+  --card-alpha: 0.7;
+  --popover-alpha: 0.82;
+  --glass-edge: 255 255 255;
+  --glass-edge-alpha: 0.78;
+  --glass-highlight-alpha: 0.58;
+  --glass-inset-alpha: 0.56;
+  --glass-focus-edge-alpha: 0.44;
+  --glass-dialog-shadow-alpha: 0.22;
+  --glass-shadow: 15 23 42;
+  --glass-shadow-alpha: 0.1;
+  --glass-hover: 255 255 255;
+  --glass-hover-alpha: 0.5;
 
   /* Azul — identidade visual atual */
   --primary: 211 100% 50%;
@@ -78,7 +89,18 @@
   --card-foreground: 210 20% 97%;
   --popover: 220 14% 10%;
   --popover-foreground: 210 20% 97%;
-  --card-alpha: 0.85;
+  --card-alpha: 0.62;
+  --popover-alpha: 0.76;
+  --glass-edge: 255 255 255;
+  --glass-edge-alpha: 0.12;
+  --glass-highlight-alpha: 0.1;
+  --glass-inset-alpha: 0.08;
+  --glass-focus-edge-alpha: 0.07;
+  --glass-dialog-shadow-alpha: 0.54;
+  --glass-shadow: 0 0 0;
+  --glass-shadow-alpha: 0.42;
+  --glass-hover: 255 255 255;
+  --glass-hover-alpha: 0.08;
 
   --primary: 212 100% 54%;
   --primary-foreground: 0 0% 100%;
@@ -140,39 +162,95 @@ body {
   color: hsl(var(--foreground));
   background-color: hsl(var(--background));
   background-image:
-    radial-gradient(circle at 15% 20%, hsl(211 100% 50% / 0.08), transparent 32%),
-    radial-gradient(circle at 85% 80%, hsl(199 92% 68% / 0.06), transparent 34%);
+    radial-gradient(circle at 12% 15%, hsl(211 100% 56% / 0.14), transparent 30%),
+    radial-gradient(circle at 88% 78%, hsl(190 90% 64% / 0.1), transparent 34%),
+    linear-gradient(145deg, hsl(216 38% 98%), hsl(210 40% 96%));
   background-attachment: fixed;
 }
 
 .dark body {
   background-color: hsl(var(--background));
   background-image:
-    radial-gradient(circle at 12% 18%, hsl(0 0% 100% / 0.04), transparent 22%),
-    radial-gradient(circle at 85% 78%, hsl(212 100% 54% / 0.05), transparent 30%),
+    radial-gradient(circle at 12% 18%, hsl(212 100% 60% / 0.1), transparent 26%),
+    radial-gradient(circle at 85% 78%, hsl(190 100% 54% / 0.07), transparent 30%),
     linear-gradient(180deg, #000000 0%, #050608 45%, #0a0b0d 100%);
   background-attachment: fixed;
 }
 
+.app-shell {
+  background-color: hsl(var(--background) / 0.72);
+  background-image:
+    radial-gradient(circle at 7% 12%, hsl(var(--primary) / 0.12), transparent 28%),
+    radial-gradient(circle at 94% 82%, hsl(190 95% 58% / 0.08), transparent 32%);
+}
+
 .bg-card,
-.bg-popover {
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.07), 0 2px 8px rgb(0 0 0 / 0.04);
+.bg-popover,
+.glass-panel {
+  background-image:
+    linear-gradient(135deg, rgb(var(--glass-edge) / var(--glass-highlight-alpha)), transparent 38%),
+    linear-gradient(315deg, rgb(var(--glass-edge) / 0.06), transparent 42%);
+  border-color: rgb(var(--glass-edge) / var(--glass-edge-alpha));
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
+  box-shadow:
+    0 16px 42px rgb(var(--glass-shadow) / var(--glass-shadow-alpha)),
+    0 2px 8px rgb(var(--glass-shadow) / 0.04),
+    inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-inset-alpha)),
+    inset 0 -1px 0 rgb(255 255 255 / 0.04);
 }
 
 .dark .bg-card,
-.dark .bg-popover {
-  backdrop-filter: blur(26px) saturate(180%);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
+.dark .bg-popover,
+.dark .glass-panel {
+  backdrop-filter: blur(28px) saturate(185%);
+  -webkit-backdrop-filter: blur(28px) saturate(185%);
   box-shadow:
-    0 12px 36px rgb(0 0 0 / 0.32),
-    inset 0 1px 0 rgb(255 255 255 / 0.05),
-    inset 0 -1px 0 rgb(0 0 0 / 0.18);
+    0 18px 48px rgb(0 0 0 / var(--glass-shadow-alpha)),
+    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+
+.bg-popover,
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="select-content"] {
+  border-radius: 1rem;
+}
+
+[data-slot="dialog-content"] {
+  background-color: hsl(var(--card) / var(--popover-alpha));
+  background-image: linear-gradient(135deg, rgb(var(--glass-edge) / var(--glass-highlight-alpha)), transparent 42%);
+  border-color: rgb(var(--glass-edge) / var(--glass-edge-alpha));
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  box-shadow:
+    0 24px 70px rgb(var(--glass-shadow) / var(--glass-dialog-shadow-alpha)),
+    inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-inset-alpha));
+}
+
+@media (hover: hover) {
+  [class*="hover:bg-muted"]:hover,
+  [data-slot="dropdown-menu-item"]:focus,
+  [data-slot="dropdown-menu-checkbox-item"]:focus,
+  [data-slot="dropdown-menu-radio-item"]:focus,
+  [data-slot="dropdown-menu-sub-trigger"]:focus,
+  [data-slot="select-item"]:focus {
+    background-color: rgb(var(--glass-hover) / var(--glass-hover-alpha)) !important;
+    color: hsl(var(--foreground));
+    box-shadow:
+      inset 0 1px 0 rgb(var(--glass-edge) / var(--glass-focus-edge-alpha)),
+      0 6px 18px rgb(var(--glass-shadow) / 0.06);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+  }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .bg-card, .bg-popover { --card-alpha: 1; }
+  .bg-card, .bg-popover, .glass-panel {
+    --card-alpha: 0.96;
+    --popover-alpha: 0.98;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -185,13 +263,6 @@ body {
 
 .glass-panel {
   background-color: hsl(var(--card) / var(--card-alpha));
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-}
-
-.dark .glass-panel {
-  backdrop-filter: blur(26px) saturate(180%);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
 }
 
 .custom-scrollbar::-webkit-scrollbar {

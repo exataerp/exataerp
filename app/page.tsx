@@ -510,7 +510,7 @@ export default function ExataApp() {
         input[type="number"] { -moz-appearance: textfield; }
       ` }} />
 
-      <div className="h-screen overflow-hidden bg-background flex print:block">
+      <div className="app-shell h-screen overflow-hidden flex print:block">
 
         {/* SIDEBAR DESKTOP */}
         <aside className={`hidden lg:flex flex-col flex-shrink-0 bg-card border-r border-border sidebar-transition print:hidden ${collapsed ? "w-[68px]" : "w-60"}`}>
