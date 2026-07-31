@@ -184,7 +184,7 @@ const APPLE_CHART_COLORS = {
 const OEE_LEGEND_ITEMS = [
   { label: "Disponibilidade", color: APPLE_CHART_COLORS.blue },
   { label: "OEE", color: APPLE_CHART_COLORS.gray },
-  { label: "Performance", color: APPLE_CHART_COLORS.indigo },
+  { label: "Performance", color: APPLE_CHART_COLORS.teal },
   { label: "Qualidade", color: APPLE_CHART_COLORS.green },
 ] as const
 
@@ -882,7 +882,7 @@ export function RelatoriosTab({
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend content={<LegendaOEE />} />
                     <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.teal} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                     <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                     <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
