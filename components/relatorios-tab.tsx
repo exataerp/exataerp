@@ -181,6 +181,29 @@ const APPLE_CHART_COLORS = {
   gray: "rgb(var(--chart-system-gray))",
 } as const
 
+const OEE_LEGEND_ITEMS = [
+  { label: "Disponibilidade", color: APPLE_CHART_COLORS.blue },
+  { label: "OEE", color: APPLE_CHART_COLORS.teal },
+  { label: "Performance", color: APPLE_CHART_COLORS.indigo },
+  { label: "Qualidade", color: APPLE_CHART_COLORS.green },
+] as const
+
+function LegendaOEE() {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 pt-2 text-[11px]"
+      aria-label="Legenda dos indicadores de OEE"
+    >
+      {OEE_LEGEND_ITEMS.map(item => (
+        <span key={item.label} className="inline-flex items-center gap-2" style={{ color: item.color }}>
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function LegendaCiclo() {
   return (
     <div
@@ -202,6 +225,12 @@ function LegendaCiclo() {
         <span>Realizado</span>
         <span className="font-semibold text-green-600 dark:text-green-400">(verde ≤)</span>
         <span>previsto;</span>
+      </span>
+      <span className="inline-flex items-center gap-2">
+        <span
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ backgroundColor: APPLE_CHART_COLORS.red }}
+        />
         <span className="font-semibold text-red-600 dark:text-red-400">(vermelho &gt;)</span>
       </span>
     </div>
@@ -819,7 +848,7 @@ export function RelatoriosTab({
                 <h3 className="text-sm font-bold text-foreground mb-1">OEE por Máquina</h3>
                 <p className="text-[11px] text-muted-foreground mb-5">Meta de classe mundial: 85%</p>
                 <ResponsiveContainer width="100%" height={308}>
-                  <BarChart data={dadosOEE} barGap={4}>
+                  <BarChart data={dadosOEE} barCategoryGap="42%" barGap={8}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                     <XAxis
                       dataKey="maquina"
@@ -830,11 +859,11 @@ export function RelatoriosTab({
                     />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} radius={[4, 4, 0, 0]} unit="%" />
-                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.teal} radius={[4, 4, 0, 0]} unit="%" />
+                    <Legend content={<LegendaOEE />} />
+                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.indigo} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.teal} maxBarSize={44} radius={[8, 8, 4, 4]} unit="%" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
