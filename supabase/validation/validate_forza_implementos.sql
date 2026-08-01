@@ -178,6 +178,37 @@ with recursive empresa as (
   select 23, 'Fornecedores fictícios', '20', count(*)::text, count(*) = 20
   from public.fornecedores
   where empresa_id = (select id from empresa) and dados_demonstracao
+
+  union all
+  select 24, 'Textos com codificação UTF-8 inválida', '0', count(*)::text, count(*) = 0
+  from (
+    select id from public.empresas
+    where id=(select id from empresa)
+      and concat_ws(' ', nome, razao_social, segmento, endereco, cidade, regime_producao, tipo_producao) ~ '[ÃÂ]'
+    union all select id from public.unidades_empresa
+    where empresa_id=(select id from empresa) and concat_ws(' ', nome, descricao, endereco) ~ '[ÃÂ]'
+    union all select id from public.setores
+    where empresa_id=(select id from empresa) and concat_ws(' ', nome, descricao) ~ '[ÃÂ]'
+    union all select id from public.familias_produto
+    where empresa_id=(select id from empresa) and concat_ws(' ', nome, descricao) ~ '[ÃÂ]'
+    union all select id from public.funcionarios
+    where empresa_id=(select id from empresa) and concat_ws(' ', nome, cargo, funcao, email) ~ '[ÃÂ]'
+    union all select id from public.maquinas
+    where empresa_id=(select id from empresa) and dados_demonstracao
+      and concat_ws(' ', nome, setor, tipo_recurso, observacao) ~ '[ÃÂ]'
+    union all select id from public.locais_estoque
+    where empresa_id=(select id from empresa) and concat_ws(' ', nome, descricao) ~ '[ÃÂ]'
+    union all select id from public.fornecedores
+    where empresa_id=(select id from empresa) and concat_ws(' ', razao_social, nome_fantasia, categoria, cidade) ~ '[ÃÂ]'
+    union all select id from public.produtos
+    where empresa_id=(select id from empresa) and dados_demonstracao and descricao ~ '[ÃÂ]'
+    union all select id from public.insumos
+    where empresa_id=(select id from empresa) and dados_demonstracao and descricao ~ '[ÃÂ]'
+    union all select id from public.operacoes
+    where empresa_id=(select id from empresa) and dados_demonstracao and concat_ws(' ', nome, descricao) ~ '[ÃÂ]'
+    union all select id from public.apontamentos
+    where empresa_id=(select id from empresa) and observacao like 'SEED FORZA%' and operacao_nome ~ '[ÃÂ]'
+  ) textos_invalidos
 )
 select ordem, validacao, esperado, obtido, ok
 from validacoes

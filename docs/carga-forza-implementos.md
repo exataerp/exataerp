@@ -26,6 +26,8 @@ psql "$env:SUPABASE_DB_URL" --set=ON_ERROR_STOP=1 --file=supabase/validation/val
 
 O seed é transacional. Quando o executor remoto tiver limite curto de tempo, as seções numeradas do próprio arquivo podem ser executadas em lotes, na ordem indicada.
 
+O arquivo está codificado em UTF-8. No Windows PowerShell, qualquer leitura intermediária deve informar explicitamente `Get-Content -Encoding utf8`; a codificação padrão do Windows PowerShell não deve ser usada para encaminhar o SQL ao banco.
+
 ## Resultado aplicado em produção
 
 | Cadastro | Quantidade |
@@ -60,7 +62,7 @@ O seed é transacional. Quando o executor remoto tiver limite curto de tempo, as
 
 ## Validações
 
-Foram executadas 23 regras automáticas. Todas passaram, incluindo:
+Foram executadas 24 regras automáticas. Todas passaram, incluindo:
 
 - distribuição exata dos 294 funcionários;
 - 5.200 itens ativos;
@@ -73,8 +75,9 @@ Foram executadas 23 regras automáticas. Todas passaram, incluindo:
 - disponibilidade de operações nos postos para a tela de apontamentos;
 - reexecução integral sem duplicação;
 - isolamento do tenant da FORZA IMPLEMENTOS.
+- ausência de textos com sinais de codificação UTF-8 incorreta.
 
-Resultado final: **23/23 validações aprovadas e 0 erros**.
+Resultado final: **24/24 validações aprovadas e 0 erros**.
 
 ## Ajustes no frontend
 
