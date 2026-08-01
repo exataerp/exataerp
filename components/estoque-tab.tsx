@@ -25,7 +25,7 @@ interface Insumo {
   unidade_medida: string
   preco_unitario: number
   estoque_minimo: number
-  tipo: "materia_prima" | "produto_acabado" | "semi_acabado"
+  tipo: "materia_prima" | "produto_acabado" | "semi_acabado" | "componente_comprado" | "embalagem" | "consumivel"
 }
 
 interface SaldoComItem {
@@ -70,6 +70,9 @@ const TIPO_LABELS: Record<string, string> = {
   materia_prima: "Matéria-Prima",
   produto_acabado: "Produto Acabado",
   semi_acabado: "Semi-Acabado",
+  componente_comprado: "Componente Comprado",
+  embalagem: "Embalagem",
+  consumivel: "Consumível",
 }
 
 const TIPO_MOV_LABELS: Record<string, { label: string; cor: string; icone: "in" | "out" | "adj" }> = {
@@ -638,6 +641,9 @@ export function EstoqueTab({
                 <SelectItem value="materia_prima">Matéria-Prima</SelectItem>
                 <SelectItem value="semi_acabado">Semi-Acabado</SelectItem>
                 <SelectItem value="produto_acabado">Produto Acabado</SelectItem>
+                <SelectItem value="componente_comprado">Componente Comprado</SelectItem>
+                <SelectItem value="embalagem">Embalagem</SelectItem>
+                <SelectItem value="consumivel">Consumível</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -667,7 +673,7 @@ export function EstoqueTab({
                       <td className="px-4 py-3 text-foreground text-xs max-w-[200px] truncate">{s.insumo.descricao}</td>
                       <td className="px-4 py-3">
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                          {TIPO_LABELS[s.insumo.tipo]}
+                          {TIPO_LABELS[s.insumo.tipo] ?? s.insumo.tipo}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -834,6 +840,9 @@ export function EstoqueTab({
                         <SelectItem value="materia_prima">Matéria-Prima</SelectItem>
                         <SelectItem value="semi_acabado">Semi-Acabado</SelectItem>
                         <SelectItem value="produto_acabado">Produto Acabado</SelectItem>
+                        <SelectItem value="componente_comprado">Componente Comprado</SelectItem>
+                        <SelectItem value="embalagem">Embalagem</SelectItem>
+                        <SelectItem value="consumivel">Consumível</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -889,7 +898,7 @@ export function EstoqueTab({
                         <td className="px-4 py-3 text-xs text-foreground">{i.descricao}</td>
                         <td className="px-4 py-3">
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                            {TIPO_LABELS[i.tipo]}
+                            {TIPO_LABELS[i.tipo] ?? i.tipo}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">{i.unidade_medida}</td>
