@@ -9,8 +9,8 @@ interface SparklineProps {
 
 /** Mini gráfico de tendência, sem eixos nem grade — só a forma da curva com área em gradiente. */
 export function Sparkline({ data, color = "text-primary", height = 32 }: SparklineProps) {
-  if (!data || data.length < 2) return null
   const id = React.useId().replace(/:/g, "")
+  if (!data || data.length < 2) return null
   const points = data.map((v, i) => ({ i, v }))
 
   return (

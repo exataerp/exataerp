@@ -4,3 +4,4 @@ overrides:
 allowBuilds:
   core-js: false
   sharp: true
+  unrs-resolver: false
