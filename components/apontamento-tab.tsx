@@ -28,8 +28,6 @@ interface Operacao {
   id: string
   nome: string
   maquina_id?: string
-  maquina_nome?: string
-  maquina_codigo?: string
   ordem: number
 }
 
@@ -87,6 +85,14 @@ function formatarTempo(segundos: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
 }
 
+interface PostoTrabalho {
+  id: string
+  codigo: string
+  nome: string
+  setor?: string
+  status: string
+}
+
 function badgeStatus({
   fechada,
   emAndamento,
@@ -100,14 +106,6 @@ function badgeStatus({
   if (emAndamento) return { label: "Em andamento", classes: "bg-primary/10 text-primary border border-primary/20" }
   if (temApontamento) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
   return { label: "Agendada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
-}
-
-interface PostoTrabalho {
-  id: string
-  codigo: string
-  nome: string
-  setor?: string
-  status: string
 }
 
 // ─── Modal de Pausa ───────────────────────────────────────────────────────────
@@ -336,7 +334,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [showAvisoEstoque, setShowAvisoEstoque] = useState(false)
   const [avisoItens, setAvisoItens] = useState<{ codigo: string; descricao: string; disponivel: number; necessario: number; unidade: string }[]>([])
 
-  // Painel & Filtros de OPs
+  // Mantido apenas para o painel histórico oculto; o fluxo principal usa o seletor de OP.
   const [opExpandida, setOpExpandida] = useState<string | null>(null)
   const [filtroStatusOP, setFiltroStatusOP] = useState<"ativas" | "encerradas" | "todas">("ativas")
   const [buscaOP, setBuscaOP] = useState("")
@@ -470,7 +468,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         if (!prod) { setOperacoes([]); setLoadingOps(false); return }
         supabase
           .from("operacao_postos_trabalho")
-          .select("operacao_id, operacoes!inner(id, nome, maquina_id, ordem, produto_id, maquinas(nome, codigo))")
+          .select("operacao_id, operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(id, nome, maquina_id, ordem, produto_id)")
           .eq("empresa_id", empresaAtivaId!)
           .eq("maquina_id", postoSelecionadoId)
           .eq("ativo", true)
@@ -487,8 +485,6 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               id: o.operacoes.id,
               nome: o.operacoes.nome,
               maquina_id: o.operacoes.maquina_id,
-              maquina_nome: o.operacoes.maquinas?.nome,
-              maquina_codigo: o.operacoes.maquinas?.codigo,
               ordem: o.operacoes.ordem,
             }))
             setOperacoes(formatted)
@@ -1105,7 +1101,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         ))}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="mx-auto w-full max-w-5xl">
 
         {/* Painel de controle */}
         <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
@@ -1291,8 +1287,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           </div>
         </div>
 
-        {/* Painel de OPs */}
-        <div className="md:col-span-2 space-y-4">
+        {/* Painel histórico preservado temporariamente, mas removido da interface de apontamentos. */}
+        <div className="hidden" aria-hidden="true">
           <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-border space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
