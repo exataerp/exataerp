@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
-  Eye, EyeOff, Sun, Moon, Check, Loader2, AlertCircle, ShieldCheck
+  Eye, EyeOff, Check, Loader2, AlertCircle, ShieldCheck
 } from 'lucide-react'
 
 // ─── helpers de senha ─────────────────────────────────────────────────────────
@@ -24,18 +24,18 @@ function senhaForte(s: string) {
 function IndicadorSenha({ senha, show }: { senha: string; show: boolean }) {
   if (!show) return null
   return (
-    <div className="grid grid-cols-1 gap-1.5 mt-2 p-3 rounded-xl bg-white/[0.03] border border-white/8">
+    <div className="grid grid-cols-1 gap-1.5 mt-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
       {REQUISITOS.map(r => {
         const ok = r.test(senha)
         return (
           <div key={r.id} className="flex items-center gap-2">
             <div className={['h-4 w-4 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300',
-              ok ? 'bg-green-500/20' : 'bg-white/5'].join(' ')}>
+              ok ? 'bg-green-100' : 'bg-slate-200'].join(' ')}>
               <Check className={['h-2.5 w-2.5 transition-all duration-300',
-                ok ? 'text-green-400' : 'text-white/15'].join(' ')} />
+                ok ? 'text-green-600' : 'text-slate-400'].join(' ')} />
             </div>
             <span className={['text-[11px] transition-colors duration-300',
-              ok ? 'text-green-400' : 'text-muted-foreground/50'].join(' ')}>
+              ok ? 'text-green-600' : 'text-slate-500'].join(' ')}>
               {r.label}
             </span>
           </div>
@@ -54,7 +54,6 @@ function PrimeiroAcessoInner() {
 
   const [estado, setEstado] = useState<Estado>('validando')
   const [erroMsg, setErroMsg] = useState('')
-  const [tema, setTema] = useState<'dark' | 'light'>('dark')
 
   // Dados do convite
   const [emailConvite, setEmailConvite] = useState('')
@@ -159,12 +158,6 @@ function PrimeiroAcessoInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Aplica tema ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    document.documentElement.classList.remove('light', 'dark')
-    document.documentElement.classList.add(tema)
-  }, [tema])
-
   // ── Validações ────────────────────────────────────────────────────────────
   const validar = () => {
     const e: Record<string, string> = {}
@@ -203,7 +196,7 @@ function PrimeiroAcessoInner() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ nome: nome.trim(), tema }),
+        body: JSON.stringify({ nome: nome.trim(), tema: 'light' }),
       })
 
       if (!res.ok) {
@@ -234,10 +227,10 @@ function PrimeiroAcessoInner() {
 
   if (estado === 'validando') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#050608]">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center space-y-3">
           <Loader2 className="h-8 w-8 text-primary animate-spin mx-auto" />
-          <p className="text-xs text-muted-foreground font-medium tracking-widest uppercase">Validando convite...</p>
+          <p className="text-xs text-slate-500 font-medium tracking-widest uppercase">Validando convite...</p>
         </div>
       </div>
     )
@@ -245,14 +238,14 @@ function PrimeiroAcessoInner() {
 
   if (estado === 'ja_usado') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-[#050608]">
-        <div className="w-full max-w-sm text-center space-y-6 bg-white/[0.04] border border-white/10 rounded-3xl p-10 backdrop-blur-xl">
-          <div className="h-14 w-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto">
-            <AlertCircle className="h-7 w-7 text-amber-400" />
+      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+        <div className="w-full max-w-sm text-center space-y-6 bg-white border border-slate-200 rounded-3xl p-10 shadow-xl shadow-slate-200/70">
+          <div className="h-14 w-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto">
+            <AlertCircle className="h-7 w-7 text-amber-600" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-lg font-bold text-foreground">Acesso já concluído</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed">
+            <h1 className="text-lg font-bold text-slate-900">Acesso já concluído</h1>
+            <p className="text-sm text-slate-500 leading-relaxed">
               Este primeiro acesso já foi concluído. Utilize a tela de Login para entrar.
             </p>
           </div>
@@ -267,17 +260,17 @@ function PrimeiroAcessoInner() {
 
   if (estado === 'erro_convite') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-[#050608]">
-        <div className="w-full max-w-sm text-center space-y-6 bg-white/[0.04] border border-white/10 rounded-3xl p-10 backdrop-blur-xl">
-          <div className="h-14 w-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto">
-            <AlertCircle className="h-7 w-7 text-red-400" />
+      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+        <div className="w-full max-w-sm text-center space-y-6 bg-white border border-slate-200 rounded-3xl p-10 shadow-xl shadow-slate-200/70">
+          <div className="h-14 w-14 rounded-2xl bg-red-50 border border-red-200 flex items-center justify-center mx-auto">
+            <AlertCircle className="h-7 w-7 text-red-600" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-lg font-bold text-foreground">Convite inválido</h1>
-            <p className="text-sm text-muted-foreground leading-relaxed">{erroMsg}</p>
+            <h1 className="text-lg font-bold text-slate-900">Convite inválido</h1>
+            <p className="text-sm text-slate-500 leading-relaxed">{erroMsg}</p>
           </div>
           <a href="/login"
-            className="block w-full h-11 flex items-center justify-center rounded-xl border border-white/10 text-muted-foreground text-sm font-bold uppercase tracking-widest hover:text-foreground hover:bg-white/5 transition-all">
+            className="block w-full h-11 flex items-center justify-center rounded-xl border border-slate-300 text-slate-600 text-sm font-bold uppercase tracking-widest hover:text-slate-900 hover:bg-slate-50 transition-all">
             Ir para o Login
           </a>
         </div>
@@ -287,14 +280,14 @@ function PrimeiroAcessoInner() {
 
   if (estado === 'sucesso') {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-[#050608]">
-        <div className="w-full max-w-sm text-center space-y-6 bg-white/[0.04] border border-white/10 rounded-3xl p-10 backdrop-blur-xl animate-in zoom-in-95 duration-500">
-          <div className="h-16 w-16 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center mx-auto">
-            <ShieldCheck className="h-8 w-8 text-green-400" />
+      <div className="min-h-screen flex items-center justify-center p-4 bg-slate-50">
+        <div className="w-full max-w-sm text-center space-y-6 bg-white border border-slate-200 rounded-3xl p-10 shadow-xl shadow-slate-200/70 animate-in zoom-in-95 duration-500">
+          <div className="h-16 w-16 rounded-2xl bg-green-50 border border-green-200 flex items-center justify-center mx-auto">
+            <ShieldCheck className="h-8 w-8 text-green-600" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-xl font-black text-foreground">Tudo pronto!</h1>
-            <p className="text-sm text-muted-foreground">Sua conta foi ativada com sucesso. Redirecionando...</p>
+            <h1 className="text-xl font-black text-slate-900">Tudo pronto!</h1>
+            <p className="text-sm text-slate-500">Sua conta foi ativada com sucesso. Redirecionando...</p>
           </div>
           <Loader2 className="h-5 w-5 text-primary animate-spin mx-auto" />
         </div>
@@ -306,34 +299,21 @@ function PrimeiroAcessoInner() {
   const concluindo = estado === 'concluindo'
 
   return (
-    <div className="min-h-screen bg-[#050608] flex items-start justify-center px-4 py-10 sm:py-16">
+    <div className="min-h-screen bg-slate-50 text-slate-950 flex items-start justify-center px-4 py-10 sm:py-16 relative overflow-hidden">
       {/* Fundo */}
-      <div className="fixed inset-0 -z-10 pointer-events-none"
-        style={{ background: 'radial-gradient(ellipse at 25% 15%, hsl(212 100% 54% / 0.10) 0%, transparent 55%), radial-gradient(ellipse at 75% 85%, hsl(199 92% 68% / 0.05) 0%, transparent 45%)' }}
+      <div className="fixed inset-0 pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse at 25% 15%, hsl(212 100% 54% / 0.10) 0%, transparent 55%), radial-gradient(ellipse at 75% 85%, hsl(199 92% 68% / 0.08) 0%, transparent 45%)' }}
       />
 
-      <div className="w-full max-w-md">
+      <div className="relative w-full max-w-md">
 
-        {/* Toggle de tema (topo direito) */}
-        <div className="flex items-center justify-between mb-6">
-          <span className="text-[10px] font-black tracking-[0.3em] uppercase text-white/25 select-none">EXATA</span>
-          <div className="flex items-center gap-1 p-1 rounded-xl border border-white/10 bg-white/5">
-            {(['dark', 'light'] as const).map(t => (
-              <button key={t} onClick={() => setTema(t)}
-                className={['h-7 px-3 rounded-lg text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all',
-                  tema === t
-                    ? 'bg-primary text-white shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'].join(' ')}>
-                {t === 'dark' ? <Moon className="h-3 w-3" /> : <Sun className="h-3 w-3" />}
-                {t === 'dark' ? 'Escuro' : 'Claro'}
-              </button>
-            ))}
-          </div>
+        <div className="mb-6 px-1">
+          <span className="text-[10px] font-black tracking-[0.3em] uppercase text-slate-700 select-none">EXATA</span>
         </div>
 
         {/* Card */}
-        <div className="relative bg-white/[0.04] border border-white/10 rounded-3xl shadow-2xl backdrop-blur-xl overflow-hidden">
-          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+        <div className="relative bg-white border border-slate-200 rounded-3xl shadow-2xl shadow-slate-200/70 overflow-hidden">
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-blue-200 to-transparent" />
 
           <div className="p-8 sm:p-10 space-y-7">
 
@@ -343,13 +323,13 @@ function PrimeiroAcessoInner() {
                 <div className="h-8 w-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
                   <span className="text-primary font-black text-[10px] tracking-tight">EX</span>
                 </div>
-                <span className="text-[10px] font-bold text-muted-foreground/50 uppercase tracking-widest">Primeiro Acesso</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Primeiro Acesso</span>
               </div>
-              <h1 className="text-2xl font-black text-foreground tracking-tight leading-tight">
+              <h1 className="text-2xl font-black text-slate-950 tracking-tight leading-tight">
                 Bem-vindo ao futuro<br />
                 <span className="text-primary">da sua gestão</span>
               </h1>
-              <p className="text-[12px] text-muted-foreground mt-1">
+              <p className="text-[12px] text-slate-500 mt-1">
                 {emailConvite
                   ? `Seu acesso foi liberado para ${emailConvite}. Configure sua conta para começar.`
                   : 'Seu acesso foi liberado. Configure sua conta para começar.'}
@@ -359,8 +339,8 @@ function PrimeiroAcessoInner() {
             {/* Erro global */}
             {erroMsg && estado === 'formulario' && (
               <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 animate-in slide-in-from-top-2 duration-200">
-                <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
-                <p className="text-[12px] text-red-400 font-medium">{erroMsg}</p>
+                <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />
+                <p className="text-[12px] text-red-700 font-medium">{erroMsg}</p>
               </div>
             )}
 
@@ -368,7 +348,7 @@ function PrimeiroAcessoInner() {
 
               {/* Nome */}
               <div className="space-y-1.5">
-                <label htmlFor="nome" className="block text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">
+                <label htmlFor="nome" className="block text-[11px] font-semibold text-slate-600 uppercase tracking-widest">
                   Nome completo
                 </label>
                 <input
@@ -377,20 +357,20 @@ function PrimeiroAcessoInner() {
                   placeholder="Seu nome completo"
                   disabled={concluindo}
                   autoComplete="name"
-                  className={['w-full h-12 px-4 rounded-xl border text-sm bg-white/5 text-foreground placeholder:text-muted-foreground/40 outline-none transition-all duration-200',
+                  className={['w-full h-12 px-4 rounded-xl border text-sm bg-slate-50/70 text-slate-950 placeholder:text-slate-400 outline-none transition-all duration-200',
                     erros.nome
                       ? 'border-red-500/60 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
-                      : 'border-white/10 focus:border-primary focus:ring-2 focus:ring-primary/20',
+                      : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20',
                     concluindo ? 'opacity-50 cursor-not-allowed' : ''].join(' ')}
                 />
-                {erros.nome && <p className="flex items-center gap-1.5 text-[11px] text-red-400 font-medium"><AlertCircle className="h-3 w-3" />{erros.nome}</p>}
+                {erros.nome && <p className="flex items-center gap-1.5 text-[11px] text-red-600 font-medium"><AlertCircle className="h-3 w-3" />{erros.nome}</p>}
               </div>
 
               {/* E-mail bloqueado */}
               {emailConvite && (
                 <div className="space-y-1.5">
-                  <label className="block text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">E-mail</label>
-                  <div className="w-full h-12 px-4 rounded-xl border border-white/5 bg-white/[0.02] text-muted-foreground text-sm flex items-center select-none">
+                  <label className="block text-[11px] font-semibold text-slate-600 uppercase tracking-widest">E-mail</label>
+                  <div className="w-full h-12 px-4 rounded-xl border border-slate-200 bg-slate-100 text-slate-500 text-sm flex items-center select-none">
                     {emailConvite}
                   </div>
                 </div>
@@ -398,7 +378,7 @@ function PrimeiroAcessoInner() {
 
               {/* Senha */}
               <div className="space-y-1.5">
-                <label htmlFor="nova-senha" className="block text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">
+                <label htmlFor="nova-senha" className="block text-[11px] font-semibold text-slate-600 uppercase tracking-widest">
                   Senha
                 </label>
                 <div className="relative">
@@ -410,23 +390,23 @@ function PrimeiroAcessoInner() {
                     placeholder="Mínimo 8 caracteres"
                     disabled={concluindo}
                     autoComplete="new-password"
-                    className={['w-full h-12 px-4 pr-12 rounded-xl border text-sm bg-white/5 text-foreground placeholder:text-muted-foreground/40 outline-none transition-all duration-200',
+                    className={['w-full h-12 px-4 pr-12 rounded-xl border text-sm bg-slate-50/70 text-slate-950 placeholder:text-slate-400 outline-none transition-all duration-200',
                       erros.senha
                         ? 'border-red-500/60 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
-                        : 'border-white/10 focus:border-primary focus:ring-2 focus:ring-primary/20'].join(' ')}
+                        : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20'].join(' ')}
                   />
                   <button type="button" onClick={() => setMostrarSenha(!mostrarSenha)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors">
                     {mostrarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
                 <IndicadorSenha senha={senha} show={focouSenha || senha.length > 0} />
-                {erros.senha && <p className="flex items-center gap-1.5 text-[11px] text-red-400 font-medium"><AlertCircle className="h-3 w-3" />{erros.senha}</p>}
+                {erros.senha && <p className="flex items-center gap-1.5 text-[11px] text-red-600 font-medium"><AlertCircle className="h-3 w-3" />{erros.senha}</p>}
               </div>
 
               {/* Confirmar senha */}
               <div className="space-y-1.5">
-                <label htmlFor="confirmar-senha" className="block text-[11px] font-semibold text-muted-foreground uppercase tracking-widest">
+                <label htmlFor="confirmar-senha" className="block text-[11px] font-semibold text-slate-600 uppercase tracking-widest">
                   Confirmar senha
                 </label>
                 <div className="relative">
@@ -437,41 +417,41 @@ function PrimeiroAcessoInner() {
                     placeholder="Repita a senha"
                     disabled={concluindo}
                     autoComplete="new-password"
-                    className={['w-full h-12 px-4 pr-12 rounded-xl border text-sm bg-white/5 text-foreground placeholder:text-muted-foreground/40 outline-none transition-all duration-200',
+                    className={['w-full h-12 px-4 pr-12 rounded-xl border text-sm bg-slate-50/70 text-slate-950 placeholder:text-slate-400 outline-none transition-all duration-200',
                       erros.confirmarSenha
                         ? 'border-red-500/60 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
                         : confirmarSenha && senha === confirmarSenha
                           ? 'border-green-500/40 focus:border-green-500 focus:ring-2 focus:ring-green-500/15'
-                          : 'border-white/10 focus:border-primary focus:ring-2 focus:ring-primary/20'].join(' ')}
+                          : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20'].join(' ')}
                   />
                   <button type="button" onClick={() => setMostrarConfirmar(!mostrarConfirmar)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 transition-colors">
                     {mostrarConfirmar ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {erros.confirmarSenha && <p className="flex items-center gap-1.5 text-[11px] text-red-400 font-medium"><AlertCircle className="h-3 w-3" />{erros.confirmarSenha}</p>}
+                {erros.confirmarSenha && <p className="flex items-center gap-1.5 text-[11px] text-red-600 font-medium"><AlertCircle className="h-3 w-3" />{erros.confirmarSenha}</p>}
                 {confirmarSenha && senha === confirmarSenha && (
-                  <p className="flex items-center gap-1.5 text-[11px] text-green-400 font-medium"><Check className="h-3 w-3" />Senhas iguais</p>
+                  <p className="flex items-center gap-1.5 text-[11px] text-green-600 font-medium"><Check className="h-3 w-3" />Senhas iguais</p>
                 )}
               </div>
 
               {/* Aceite de termos */}
               <label className={['flex items-start gap-3 cursor-pointer p-3.5 rounded-xl border transition-all',
-                erros.termos ? 'border-red-500/30 bg-red-500/5' : 'border-white/8 hover:border-white/15'].join(' ')}>
+                erros.termos ? 'border-red-300 bg-red-50' : 'border-slate-200 hover:border-slate-300'].join(' ')}>
                 <div
                   onClick={() => { setAceitouTermos(!aceitouTermos); setErros(p => ({ ...p, termos: '' })) }}
                   className={['h-4 w-4 mt-0.5 rounded flex items-center justify-center border flex-shrink-0 transition-all',
-                    aceitouTermos ? 'bg-primary border-primary' : 'border-white/20'].join(' ')}>
+                    aceitouTermos ? 'bg-primary border-primary' : 'border-slate-300'].join(' ')}>
                   {aceitouTermos && <Check className="h-2.5 w-2.5 text-white" />}
                 </div>
-                <span className="text-[11px] text-muted-foreground leading-relaxed">
+                <span className="text-[11px] text-slate-600 leading-relaxed">
                   Li e aceito os{' '}
                   <span className="text-primary underline underline-offset-2 cursor-pointer hover:text-primary/80 transition-colors">Termos de Uso</span>
                   {' '}e a{' '}
                   <span className="text-primary underline underline-offset-2 cursor-pointer hover:text-primary/80 transition-colors">Política de Privacidade</span>
                 </span>
               </label>
-              {erros.termos && <p className="flex items-center gap-1.5 text-[11px] text-red-400 font-medium -mt-3"><AlertCircle className="h-3 w-3" />{erros.termos}</p>}
+              {erros.termos && <p className="flex items-center gap-1.5 text-[11px] text-red-600 font-medium -mt-3"><AlertCircle className="h-3 w-3" />{erros.termos}</p>}
 
               {/* Botão */}
               <button type="submit"
@@ -486,7 +466,7 @@ function PrimeiroAcessoInner() {
 
             </form>
 
-            <p className="text-center text-[10px] text-muted-foreground/40">
+            <p className="text-center text-[10px] text-slate-400">
               Já tem uma conta?{' '}
               <a href="/login" className="text-primary/60 hover:text-primary transition-colors font-semibold">
                 Ir para o Login
@@ -495,7 +475,7 @@ function PrimeiroAcessoInner() {
           </div>
         </div>
 
-        <p className="text-center text-[10px] text-white/10 mt-6 select-none">Exata ERP © 2026</p>
+        <p className="text-center text-[10px] text-slate-400 mt-6 select-none">Exata ERP © 2026</p>
       </div>
     </div>
   )
@@ -504,7 +484,7 @@ function PrimeiroAcessoInner() {
 export default function PrimeiroAcessoPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-[#050608]">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Loader2 className="h-6 w-6 text-primary animate-spin" />
       </div>
     }>
