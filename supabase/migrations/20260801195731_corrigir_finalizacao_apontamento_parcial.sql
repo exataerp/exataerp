@@ -104,7 +104,7 @@ revoke all on function public.validar_quantidade_planejada_apontamento()
   from public, anon, authenticated;
 
 -- Somente a última operação encerra a OP. O encerramento acontece por decisão
--- explícita ou quando o acumulado chega exatamente à meta (o excedente é barrado antes).
+-- explícita ou quando o acumulado chega exatamente ao planejado (o excedente é barrado antes).
 create or replace function public.encerrar_op_ao_atingir_planejado()
 returns trigger
 language plpgsql

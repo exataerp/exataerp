@@ -188,12 +188,12 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
 
   const handleConfirm = () => {
     if (!podeConfirmarQuantidade || excedePlanejado || refugoInvalido) return
-    const atingiuMeta = isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas
+    const atingiuQuantidadePlanejada = isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas
     onConfirm({
       produzidas: quantidadeProduzida,
       refugo: quantidadeRefugo,
       retrabalho: parseInt(retrabalho) || 0,
-      encerramento: atingiuMeta ? "encerrar" : encerramento,
+      encerramento: atingiuQuantidadePlanejada ? "encerrar" : encerramento,
     })
   }
 
@@ -224,7 +224,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
             )}
             {isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas && maxProduzidas > 0 && (
               <p className="text-[10px] font-bold text-emerald-600">
-                Esta quantidade completa a meta e encerrará a OP automaticamente.
+                Esta quantidade completa o planejado e encerrará a OP automaticamente.
               </p>
             )}
           </div>
@@ -1401,7 +1401,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
                       <div className="mt-6 grid gap-3 sm:grid-cols-3">
                         <div className="rounded-2xl bg-muted/40 p-3">
-                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Package className="h-3.5 w-3.5" /> Meta</p>
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Package className="h-3.5 w-3.5" /> Planejada</p>
                           <p className="mt-1 text-sm font-black text-foreground">{ordemEmExibicao.quantidade} peças</p>
                         </div>
                         <div className="rounded-2xl bg-muted/40 p-3">
