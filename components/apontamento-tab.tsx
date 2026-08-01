@@ -714,6 +714,16 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const ordem = ordens.find(o => o.id === sessao?.ordemId)
     if (!ordem) { setShowModalFinalizar(false); handleConfirmarFinalizar(dados); return }
 
+    const ultimaOperacaoId = ultimaOperacaoPorProduto[ordem.produto_codigo]
+    const isUltimaEtapa = !ultimaOperacaoId || sessao?.operacaoId === ultimaOperacaoId
+
+    // Operações intermediárias não movimentam produto acabado nem consomem a BOM.
+    if (!isUltimaEtapa) {
+      setShowModalFinalizar(false)
+      handleConfirmarFinalizar(dados)
+      return
+    }
+
     const pecasBoas = dados.produzidas - dados.refugo
 
     // Busca BOM
@@ -823,6 +833,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         if (isUltimaEtapa && pecasBoas > 0) {
           const { data: resultado, error: erroEstoque } = await supabase.rpc("finalizar_apontamento_estoque", {
             p_empresa_id: empresaAtivaId,
+            p_apontamento_id: sessao.apontamentoId,
             p_ordem_id: sessao.ordemId,
             p_produto_codigo: ordem.produto_codigo,
             p_pecas_boas: pecasBoas,
@@ -903,7 +914,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         ? aps.some(a => a.operacao_id === ultimaOperacaoId && a.encerramento === "encerrar")
         : aps.some(a => a.encerramento === "encerrar")
 
-      const fechada = op.status === "encerrada" || foiEncerradaNaUltimaEtapa || (totalProduzidas >= op.quantidade && totalProduzidas > 0)
+      // Atingir a meta não encerra a OP implicitamente: um apontamento parcial
+      // deve manter o trabalho disponível até a conclusão explícita da última etapa.
+      const fechada = op.status === "encerrada" || foiEncerradaNaUltimaEtapa
 
       // Garantia de que OPs encerradas com peças produzidas reflitam seu percentual real de entrega
       if (fechada && pct === 0 && op.quantidade > 0 && totalProduzidas > 0) {
