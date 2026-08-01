@@ -1493,7 +1493,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                         </span>
                         <span>
                           <span className="block text-xl font-black">{operacaoSelecionadaId ? "Iniciar operação" : "Selecione uma operação"}</span>
-                          <span className="mt-1 block text-xs font-medium opacity-85">{operacaoSelecionadaId ? "Iniciar contagem do tempo neste posto" : "Escolha uma das etapas disponíveis acima"}</span>
+                          {!operacaoSelecionadaId && (
+                            <span className="mt-1 block text-xs font-medium opacity-85">Escolha uma das etapas disponíveis acima</span>
+                          )}
                         </span>
                       </button>
                     )}
