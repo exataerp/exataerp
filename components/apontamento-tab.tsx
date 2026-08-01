@@ -168,24 +168,32 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
 
 // ─── Modal de Finalizar ────────────────────────────────────────────────────────
 
-function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
+function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduzidas }: {
   onConfirm: (dados: { produzidas: number; refugo: number; retrabalho: number; encerramento: "continuar" | "encerrar" | "encerrar_parcial" }) => void
   onCancel: () => void
   loading?: boolean
   isUltimaEtapa?: boolean
+  maxProduzidas?: number
 }) {
-  const [produzidas, setProduzidas] = useState("")
+  const [produzidas, setProduzidas] = useState(maxProduzidas === 0 ? "0" : "")
   const [refugo, setRefugo] = useState("")
   const [retrabalho, setRetrabalho] = useState("")
   const [encerramento, setEncerramento] = useState<"continuar" | "encerrar" | "encerrar_parcial">("continuar")
 
+  const quantidadeProduzida = parseInt(produzidas) || 0
+  const quantidadeRefugo = parseInt(refugo) || 0
+  const excedePlanejado = maxProduzidas !== undefined && quantidadeProduzida > maxProduzidas
+  const refugoInvalido = quantidadeRefugo > quantidadeProduzida
+  const podeConfirmarQuantidade = quantidadeProduzida > 0 || maxProduzidas === 0
+
   const handleConfirm = () => {
-    if (!produzidas || parseInt(produzidas) <= 0) return
+    if (!podeConfirmarQuantidade || excedePlanejado || refugoInvalido) return
+    const atingiuQuantidadePlanejada = isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas
     onConfirm({
-      produzidas: parseInt(produzidas),
-      refugo: parseInt(refugo) || 0,
+      produzidas: quantidadeProduzida,
+      refugo: quantidadeRefugo,
       retrabalho: parseInt(retrabalho) || 0,
-      encerramento,
+      encerramento: atingiuQuantidadePlanejada ? "encerrar" : encerramento,
     })
   }
 
@@ -203,10 +211,22 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Peças Produzidas *</label>
             <input
-              type="number" min="1" placeholder="Ex: 120"
+              type="number" min={maxProduzidas === 0 ? 0 : 1} max={maxProduzidas} placeholder="Ex: 120"
               value={produzidas} onChange={e => setProduzidas(e.target.value)}
               className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
             />
+            {maxProduzidas !== undefined && (
+              <p className={`text-[10px] ${excedePlanejado ? "font-bold text-destructive" : "text-muted-foreground"}`}>
+                {excedePlanejado
+                  ? `O máximo permitido neste apontamento é ${maxProduzidas} peça${maxProduzidas === 1 ? "" : "s"}.`
+                  : `Quantidade restante nesta operação: ${maxProduzidas} peça${maxProduzidas === 1 ? "" : "s"}.`}
+              </p>
+            )}
+            {isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas && maxProduzidas > 0 && (
+              <p className="text-[10px] font-bold text-emerald-600">
+                Esta quantidade completa o planejado e encerrará a OP automaticamente.
+              </p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -216,6 +236,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
                 value={refugo} onChange={e => setRefugo(e.target.value)}
                 className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
               />
+              {refugoInvalido && <p className="text-[10px] font-bold text-destructive">Não pode superar a produção.</p>}
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Retrabalho</label>
@@ -263,7 +284,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!produzidas || parseInt(produzidas) <= 0 || loading}
+            disabled={!podeConfirmarQuantidade || excedePlanejado || refugoInvalido || loading}
             className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <span className="h-3.5 w-3.5 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />}
@@ -562,6 +583,19 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const op = operacoes.find(o => o.id === operacaoId)
     if (!op) return
 
+    const ordem = ordens.find(item => item.id === ordemSelecionadaId)
+    const totalJaApontado = apontamentos
+      .filter(apontamento => apontamento.ordem_id === ordemSelecionadaId && apontamento.operacao_id === operacaoId)
+      .reduce((total, apontamento) => total + (apontamento.pecas_produzidas || 0), 0)
+    if (ordem && totalJaApontado >= ordem.quantidade) {
+      toast({
+        title: "Quantidade planejada atingida",
+        description: "Esta operação já teve todas as peças planejadas apontadas.",
+        variant: "destructive",
+      })
+      return
+    }
+
     if (sessoes.length > 0 || sessoes.some(s => s.operacaoId === operacaoId)) {
       toast({ title: "Já existe um apontamento ativo", description: "Finalize o apontamento atual antes de iniciar outra operação.", variant: "destructive" })
       return
@@ -703,16 +737,19 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     finalizandoRef.current = true
     setFinalizando(true)
 
-    // Se não vai encerrar, não precisa verificar
-    if (dados.encerramento === "continuar") {
+    const sessao = sessoes.find(s => s.apontamentoId === sessaoEmAcaoId)
+    const ordem = ordens.find(o => o.id === sessao?.ordemId)
+    if (!ordem) { setShowModalFinalizar(false); handleConfirmarFinalizar(dados); return }
+
+    const ultimaOperacaoId = ultimaOperacaoPorProduto[ordem.produto_codigo]
+    const isUltimaEtapa = !ultimaOperacaoId || sessao?.operacaoId === ultimaOperacaoId
+
+    // Operações intermediárias não movimentam produto acabado nem consomem a BOM.
+    if (!isUltimaEtapa) {
       setShowModalFinalizar(false)
       handleConfirmarFinalizar(dados)
       return
     }
-
-    const sessao = sessoes.find(s => s.apontamentoId === sessaoEmAcaoId)
-    const ordem = ordens.find(o => o.id === sessao?.ordemId)
-    if (!ordem) { setShowModalFinalizar(false); handleConfirmarFinalizar(dados); return }
 
     const pecasBoas = dados.produzidas - dados.refugo
 
@@ -812,47 +849,39 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     // Uma única chamada atômica no banco (função finalizar_apontamento_estoque),
     // em vez de várias idas e vindas sequenciais: mais rápido e sem risco de
     // corromper saldo quando várias sessões finalizam ao mesmo tempo.
-    if (dados.encerramento !== "continuar") {
-      const ordem = ordens.find(o => o.id === sessao.ordemId)
-      if (ordem) {
-        const ultimaOperacaoId = ultimaOperacaoPorProduto[ordem.produto_codigo]
-        const isUltimaEtapa = !ultimaOperacaoId || sessao.operacaoId === ultimaOperacaoId
-        const pecasBoas = dados.produzidas - dados.refugo
+    const ordem = ordens.find(o => o.id === sessao.ordemId)
+    if (ordem) {
+      const ultimaOperacaoId = ultimaOperacaoPorProduto[ordem.produto_codigo]
+      const isUltimaEtapa = !ultimaOperacaoId || sessao.operacaoId === ultimaOperacaoId
+      const pecasBoas = dados.produzidas - dados.refugo
 
-        // Entrada de estoque de produto acabado SOMENTE se for a ÚLTIMA ETAPA do roteiro!
-        if (isUltimaEtapa && pecasBoas > 0) {
-          const { data: resultado, error: erroEstoque } = await supabase.rpc("finalizar_apontamento_estoque", {
-            p_empresa_id: empresaAtivaId,
-            p_ordem_id: sessao.ordemId,
-            p_produto_codigo: ordem.produto_codigo,
-            p_pecas_boas: pecasBoas,
-            p_refugo: dados.refugo,
-            p_observacao: `OP ${ordem.numero_op} — ${pecasBoas} peças boas (conclusão do roteiro)`,
-          })
+      // Cada lote da última etapa movimenta seu próprio estoque, inclusive
+      // quando o operador escolhe salvar para continuar em outro momento.
+      if (isUltimaEtapa && pecasBoas > 0) {
+        const { data: resultado, error: erroEstoque } = await supabase.rpc("finalizar_apontamento_estoque", {
+          p_empresa_id: empresaAtivaId,
+          p_apontamento_id: sessao.apontamentoId,
+          p_ordem_id: sessao.ordemId,
+          p_produto_codigo: ordem.produto_codigo,
+          p_pecas_boas: pecasBoas,
+          p_refugo: dados.refugo,
+          p_observacao: `OP ${ordem.numero_op} — ${pecasBoas} peças boas (conclusão do roteiro)`,
+        })
 
-          if (erroEstoque) {
-            toast({ title: "Erro ao baixar estoque", description: erroEstoque.message, variant: "destructive" })
-            return
-          }
-
-          const avisos = (resultado as any)?.avisos as { insumo: string; consumo: number; disponivel: number }[] | undefined
-          if (avisos && avisos.length > 0) {
-            for (const a of avisos) {
-              toast({
-                title: `⚠ Estoque insuficiente: ${a.insumo}`,
-                description: `Consumo: ${a.consumo} — Disponível: ${a.disponivel.toFixed(3)}. Saldo foi a negativo.`,
-                variant: "destructive",
-              })
-            }
-          }
+        if (erroEstoque) {
+          toast({ title: "Erro ao baixar estoque", description: erroEstoque.message, variant: "destructive" })
+          return
         }
 
-        // Encerra a OP no banco SOMENTE no encerramento da última etapa do roteiro.
-        // Operações intermediárias encerradas mantêm a OP ativa (em_andamento) para as próximas etapas.
-        if (dados.encerramento === "encerrar" && isUltimaEtapa) {
-          await supabase.from("ordens_producao").update({ status: "encerrada" }).eq("id", sessao.ordemId)
-        } else {
-          await supabase.from("ordens_producao").update({ status: "em_andamento" }).eq("id", sessao.ordemId)
+        const avisos = (resultado as any)?.avisos as { insumo: string; consumo: number; disponivel: number }[] | undefined
+        if (avisos && avisos.length > 0) {
+          for (const a of avisos) {
+            toast({
+              title: `⚠ Estoque insuficiente: ${a.insumo}`,
+              description: `Consumo: ${a.consumo} — Disponível: ${a.disponivel.toFixed(3)}. Saldo foi a negativo.`,
+              variant: "destructive",
+            })
+          }
         }
       }
     }
@@ -903,6 +932,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         ? aps.some(a => a.operacao_id === ultimaOperacaoId && a.encerramento === "encerrar")
         : aps.some(a => a.encerramento === "encerrar")
 
+      // A OP encerra por conclusão explícita ou quando a última operação atinge
+      // exatamente a quantidade planejada. O banco impede qualquer excedente.
       const fechada = op.status === "encerrada" || foiEncerradaNaUltimaEtapa || (totalProduzidas >= op.quantidade && totalProduzidas > 0)
 
       // Garantia de que OPs encerradas com peças produzidas reflitam seu percentual real de entrega
@@ -1078,6 +1109,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         const ordem = sessao ? ordens.find(o => o.id === sessao.ordemId) : null
         const ultimaOperacaoId = ordem ? ultimaOperacaoPorProduto[ordem.produto_codigo] : null
         const isUltimaEtapa = !sessao || !ultimaOperacaoId || sessao.operacaoId === ultimaOperacaoId
+        const totalJaApontado = sessao
+          ? apontamentos
+              .filter(apontamento => apontamento.ordem_id === sessao.ordemId && apontamento.operacao_id === sessao.operacaoId && apontamento.id !== sessao.apontamentoId)
+              .reduce((total, apontamento) => total + (apontamento.pecas_produzidas || 0), 0)
+          : 0
+        const maxProduzidas = ordem ? Math.max(0, ordem.quantidade - totalJaApontado) : undefined
 
         return (
           <ModalFinalizar
@@ -1085,6 +1122,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
             onCancel={() => setShowModalFinalizar(false)}
             loading={finalizando}
             isUltimaEtapa={isUltimaEtapa}
+            maxProduzidas={maxProduzidas}
           />
         )
       })()}
@@ -1363,7 +1401,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
                       <div className="mt-6 grid gap-3 sm:grid-cols-3">
                         <div className="rounded-2xl bg-muted/40 p-3">
-                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Package className="h-3.5 w-3.5" /> Meta</p>
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Package className="h-3.5 w-3.5" /> Planejada</p>
                           <p className="mt-1 text-sm font-black text-foreground">{ordemEmExibicao.quantidade} peças</p>
                         </div>
                         <div className="rounded-2xl bg-muted/40 p-3">
