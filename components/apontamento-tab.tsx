@@ -7,9 +7,9 @@ import { useAuth } from "@/contexts/AuthContext"
 import { isPausaProgramada } from "@/components/relatorios-tab"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  Play, Pause, Square, Plus, Trash2, ClipboardList, TrendingUp,
-  AlertTriangle, CheckCircle2, Clock, Package, Factory, ChevronDown, X, Wrench,
-  Search, RotateCcw, MapPin, UserRound
+  Play, Pause, Square, ClipboardList, AlertTriangle, CheckCircle2, Clock,
+  Package, Factory, X, Wrench, Search, MapPin, UserRound, CalendarDays,
+  Gauge, Layers3, ChevronRight
 } from "lucide-react"
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -43,14 +43,6 @@ interface Apontamento {
   status: string
   encerramento?: string
   created_at: string
-}
-
-interface Pausa {
-  id: string
-  inicio: string
-  fim?: string
-  subgrupo_nome?: string
-  grupo_nome?: string
 }
 
 interface Grupo {
@@ -91,21 +83,6 @@ interface PostoTrabalho {
   nome: string
   setor?: string
   status: string
-}
-
-function badgeStatus({
-  fechada,
-  emAndamento,
-  temApontamento,
-}: {
-  fechada: boolean
-  emAndamento: boolean
-  temApontamento: boolean
-}) {
-  if (fechada) return { label: "Encerrada", classes: "bg-blue-500/10 text-blue-600 border border-blue-500/20" }
-  if (emAndamento) return { label: "Em andamento", classes: "bg-primary/10 text-primary border border-primary/20" }
-  if (temApontamento) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
-  return { label: "Agendada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
 }
 
 // ─── Modal de Pausa ───────────────────────────────────────────────────────────
@@ -318,6 +295,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [postos, setPostos] = useState<PostoTrabalho[]>([])
   const [postoSelecionadoId, setPostoSelecionadoId] = useState("")
   const [buscaOperacao, setBuscaOperacao] = useState("")
+  const [buscaTrabalho, setBuscaTrabalho] = useState("")
+  const [codigosDisponiveisNoPosto, setCodigosDisponiveisNoPosto] = useState<Set<string>>(new Set())
+  const [loadingTrabalhos, setLoadingTrabalhos] = useState(false)
 
   // Sessões ativas (pode ter mais de uma rodando ao mesmo tempo, uma por operação/máquina)
   const [sessoes, setSessoes] = useState<SessaoAtiva[]>([])
@@ -334,16 +314,11 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [showAvisoEstoque, setShowAvisoEstoque] = useState(false)
   const [avisoItens, setAvisoItens] = useState<{ codigo: string; descricao: string; disponivel: number; necessario: number; unidade: string }[]>([])
 
-  // Mantido apenas para o painel histórico oculto; o fluxo principal usa o seletor de OP.
-  const [opExpandida, setOpExpandida] = useState<string | null>(null)
-  const [filtroStatusOP, setFiltroStatusOP] = useState<"ativas" | "encerradas" | "todas">("ativas")
-  const [buscaOP, setBuscaOP] = useState("")
-
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
   const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [opsRes, apRes, gRes, sRes, prodRes, postosRes] = await Promise.all([
@@ -406,7 +381,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     } finally {
       setLoading(false)
     }
-  }
+  }, [empresaAtivaId, toast])
 
   useEffect(() => {
     if (empresaAtivaId) {
@@ -421,7 +396,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         } catch { }
       }
     }
-  }, [empresaAtivaId])
+  }, [empresaAtivaId, loadData])
 
   // Cronômetro — atualiza o tempo decorrido de todas as sessões ativas a cada segundo
   useEffect(() => {
@@ -449,6 +424,75 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     else localStorage.removeItem(SESSAO_KEY + empresaAtivaId)
     setSessoes(s)
   }, [empresaAtivaId])
+
+  // Mantém a seleção visual sincronizada ao restaurar uma sessão ativa.
+  useEffect(() => {
+    const sessao = sessoes[0]
+    if (!sessao) return
+    if (sessao.maquinaId) setPostoSelecionadoId(sessao.maquinaId)
+    setOrdemSelecionadaId(sessao.ordemId)
+    setOperacaoSelecionadaId(sessao.operacaoId)
+  }, [sessoes])
+
+  // Descobre quais produtos possuem ao menos uma operação liberada no posto.
+  // A fila lateral passa a mostrar somente trabalhos que o operador pode iniciar.
+  useEffect(() => {
+    let cancelado = false
+
+    const carregarTrabalhosDoPosto = async () => {
+      if (!postoSelecionadoId || !empresaAtivaId) {
+        setCodigosDisponiveisNoPosto(new Set())
+        setLoadingTrabalhos(false)
+        return
+      }
+
+      setLoadingTrabalhos(true)
+      const { data: vinculos, error: erroVinculos } = await supabase
+        .from("operacao_postos_trabalho")
+        .select("operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(produto_id)")
+        .eq("empresa_id", empresaAtivaId)
+        .eq("maquina_id", postoSelecionadoId)
+        .eq("ativo", true)
+
+      if (cancelado) return
+      if (erroVinculos) {
+        setCodigosDisponiveisNoPosto(new Set())
+        setLoadingTrabalhos(false)
+        toast({ title: "Falha ao carregar trabalhos do posto", description: erroVinculos.message, variant: "destructive" })
+        return
+      }
+
+      const produtoIds = Array.from(new Set(
+        (vinculos || [])
+          .map((vinculo: any) => vinculo.operacoes?.produto_id)
+          .filter(Boolean),
+      )) as string[]
+
+      if (produtoIds.length === 0) {
+        setCodigosDisponiveisNoPosto(new Set())
+        setLoadingTrabalhos(false)
+        return
+      }
+
+      const { data: produtosDoPosto, error: erroProdutos } = await supabase
+        .from("produtos")
+        .select("codigo")
+        .eq("empresa_id", empresaAtivaId)
+        .in("id", produtoIds)
+
+      if (cancelado) return
+      if (erroProdutos) {
+        setCodigosDisponiveisNoPosto(new Set())
+        toast({ title: "Falha ao identificar produtos do posto", description: erroProdutos.message, variant: "destructive" })
+      } else {
+        setCodigosDisponiveisNoPosto(new Set((produtosDoPosto || []).map(produto => produto.codigo)))
+      }
+      setLoadingTrabalhos(false)
+    }
+
+    carregarTrabalhosDoPosto()
+    return () => { cancelado = true }
+  }, [postoSelecionadoId, empresaAtivaId, toast])
 
   // ─── Carrega operações ao selecionar OP ────────────────────────────────────
 
@@ -488,10 +532,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               ordem: o.operacoes.ordem,
             }))
             setOperacoes(formatted)
+            setOperacaoSelecionadaId((operacaoAtual) => {
+              if (formatted.some(operacao => operacao.id === operacaoAtual)) return operacaoAtual
+              return formatted.length === 1 ? formatted[0].id : ""
+            })
             setLoadingOps(false)
           })
       })
-  }, [ordemSelecionadaId, postoSelecionadoId, empresaAtivaId, toast])
+  }, [ordemSelecionadaId, postoSelecionadoId, empresaAtivaId, ordens, toast])
 
   // ─── Iniciar ───────────────────────────────────────────────────────────────
 
@@ -562,8 +610,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       ))
     }
     salvarSessoes([...sessoes, novaSessao])
-    setOrdemSelecionadaId("")
-    setOperacaoSelecionadaId("")
+    setOrdemSelecionadaId(novaSessao.ordemId)
+    setOperacaoSelecionadaId(novaSessao.operacaoId)
     toast({
       title: "Apontamento iniciado",
       description: op.nome,
@@ -877,47 +925,6 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     })
   }, [ordens, apontamentos, ultimaOperacaoPorProduto])
 
-  const kpis = useMemo(() => {
-    const totalOPs = ordens.length
-    const opsFechadas = resumos.filter(r => r.fechada).length
-    const totalProduzidas = apontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalRefugo = apontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const temBaseRefugo = totalProduzidas + totalRefugo > 0
-    const pctRefugo = temBaseRefugo
-      ? ((totalRefugo / (totalProduzidas + totalRefugo)) * 100).toFixed(1) : "N/A"
-    return { totalOPs, opsFechadas, totalProduzidas, totalRefugo, pctRefugo, temBaseRefugo }
-  }, [ordens, apontamentos, resumos])
-
-  const resumosFiltrados = useMemo(() => {
-    return resumos.filter(r => {
-      if (filtroStatusOP === "ativas" && r.fechada) return false
-      if (filtroStatusOP === "encerradas" && !r.fechada) return false
-
-      if (buscaOP.trim()) {
-        const q = buscaOP.toLowerCase().trim()
-        const desc = (mapaDescricaoProdutos[r.op.produto_codigo] || "").toLowerCase()
-        const num = r.op.numero_op.toLowerCase()
-        const cod = r.op.produto_codigo.toLowerCase()
-        return num.includes(q) || cod.includes(q) || desc.includes(q)
-      }
-      return true
-    })
-  }, [resumos, filtroStatusOP, buscaOP, mapaDescricaoProdutos])
-
-  const handleReabrirOP = async (opId: string) => {
-    const { error } = await supabase
-      .from("ordens_producao")
-      .update({ status: "em_andamento" })
-      .eq("id", opId)
-
-    if (error) {
-      toast({ title: "Erro ao reabrir OP", description: error.message, variant: "destructive" })
-    } else {
-      toast({ title: "✅ OP Reaberta", description: "A OP retornou para a lista de OPs ativas." })
-      await loadData()
-    }
-  }
-
   const ordemAtual = ordens.find(o => o.id === ordemSelecionadaId)
 
   const criarOSManutencao = async () => {
@@ -947,6 +954,72 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setShowSugestaoManutencao(false)
     setSubgrupoParada(null)
   }
+
+  const sessaoAtiva = sessoes[0] ?? null
+  const postoAtual = postos.find(posto => posto.id === postoSelecionadoId)
+  const ordemEmExibicao = sessaoAtiva
+    ? ordens.find(ordem => ordem.id === sessaoAtiva.ordemId)
+    : ordemAtual
+  const operacaoEmExibicao = sessaoAtiva
+    ? operacoes.find(operacao => operacao.id === sessaoAtiva.operacaoId) ?? {
+        id: sessaoAtiva.operacaoId,
+        nome: sessaoAtiva.operacaoNome,
+        ordem: 0,
+      }
+    : operacoes.find(operacao => operacao.id === operacaoSelecionadaId)
+  const resumoEmExibicao = ordemEmExibicao
+    ? resumos.find(resumo => resumo.op.id === ordemEmExibicao.id)
+    : undefined
+
+  const trabalhosDisponiveis = useMemo(() => {
+    const termo = buscaTrabalho.trim().toLowerCase()
+    return resumos
+      .filter(resumo => {
+        if (resumo.fechada) return false
+        const ehSessaoAtiva = resumo.op.id === sessaoAtiva?.ordemId
+        if (!ehSessaoAtiva && !codigosDisponiveisNoPosto.has(resumo.op.produto_codigo)) return false
+        if (!termo) return true
+        const descricao = mapaDescricaoProdutos[resumo.op.produto_codigo] || ""
+        return [resumo.op.numero_op, resumo.op.produto_codigo, descricao]
+          .some(valor => valor.toLowerCase().includes(termo))
+      })
+      .sort((a, b) => {
+        if (a.op.id === sessaoAtiva?.ordemId) return -1
+        if (b.op.id === sessaoAtiva?.ordemId) return 1
+        return (a.op.data_programacao || "").localeCompare(b.op.data_programacao || "")
+      })
+  }, [resumos, buscaTrabalho, codigosDisponiveisNoPosto, mapaDescricaoProdutos, sessaoAtiva?.ordemId])
+
+  const segundosAtivos = sessaoAtiva
+    ? segundosMap[sessaoAtiva.apontamentoId] ?? sessaoAtiva.segundosAcumulados
+    : 0
+  const sessaoEmPausa = !!sessaoAtiva?.pausaInicioTimestamp
+  const cicloAtivo = sessaoAtiva?.cicloPlanejadoSeg
+  const ciclosCompletos = cicloAtivo && cicloAtivo > 0 ? Math.floor(segundosAtivos / cicloAtivo) : 0
+  const tempoNoCicloAtual = cicloAtivo && cicloAtivo > 0
+    ? segundosAtivos - ciclosCompletos * cicloAtivo
+    : segundosAtivos
+  const percentualCiclo = cicloAtivo && cicloAtivo > 0
+    ? Math.min(100, (tempoNoCicloAtual / cicloAtivo) * 100)
+    : 0
+  const percentualRitmo = cicloAtivo && cicloAtivo > 0
+    ? (tempoNoCicloAtual / cicloAtivo) * 100
+    : null
+  const ritmo = sessaoEmPausa
+    ? { label: "Operação pausada", detalhe: "O cronômetro está interrompido", cor: "#f59e0b", texto: "text-amber-500" }
+    : percentualRitmo === null
+      ? { label: "Operação em andamento", detalhe: "Sem ciclo padrão cadastrado", cor: "hsl(var(--primary))", texto: "text-primary" }
+      : percentualRitmo <= 90
+        ? { label: "Dentro do ciclo", detalhe: `Ciclo estimado ${ciclosCompletos + 1}`, cor: "#22c55e", texto: "text-green-600" }
+        : percentualRitmo <= 110
+          ? { label: "No limite do ciclo", detalhe: `Ciclo estimado ${ciclosCompletos + 1}`, cor: "#f59e0b", texto: "text-amber-500" }
+          : { label: "Tempo do ciclo excedido", detalhe: `Ciclo estimado ${ciclosCompletos + 1}`, cor: "#ef4444", texto: "text-destructive" }
+
+  const hojeFormatado = new Intl.DateTimeFormat("pt-BR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  }).format(new Date())
 
   if (loading) {
     return (
@@ -1081,393 +1154,430 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         </div>
       )}
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "OPs na carteira", value: kpis.totalOPs, icon: ClipboardList, color: "text-primary" },
-          { label: "OPs concluídas", value: kpis.opsFechadas, icon: CheckCircle2, color: "text-green-600" },
-          { label: "Peças produzidas", value: kpis.totalProduzidas.toLocaleString("pt-BR"), icon: Package, color: "text-primary" },
-          { label: "Taxa de refugo", value: kpis.temBaseRefugo ? `${kpis.pctRefugo}%` : "N/A", icon: AlertTriangle, color: kpis.temBaseRefugo && Number(kpis.pctRefugo) > 5 ? "text-destructive" : "text-amber-500" },
-        ].map(({ label, value, icon: Icon, color }) => (
-          <div key={label} className="bg-card border border-border rounded-2xl px-5 py-4 flex items-center gap-4 shadow-sm">
-            <div className="h-10 w-10 flex items-center justify-center rounded-xl bg-muted flex-shrink-0">
-              <Icon className={`h-5 w-5 ${color}`} />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground font-medium">{label}</p>
-              <p className="text-xl font-bold text-foreground">{value}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mx-auto w-full max-w-5xl">
-
-        {/* Painel de controle */}
-        <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-border">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Apontamentos</h3>
-                <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><UserRound className="h-3 w-3" /> {session?.user.nome || "Usuário"}</p>
-              </div>
-              {sessoes.length > 0 && <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" title="Apontamento ativo" />}
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              {sessoes.length > 0 ? "Apontamento em andamento" : "Escolha um posto, uma OP e a operação"}
+      {/* Experiência operacional: posto -> trabalho -> operação -> execução */}
+      <div className="mx-auto w-full max-w-[1480px] space-y-5">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold capitalize text-muted-foreground">{hojeFormatado}</p>
+            <h2 className="mt-1 text-2xl font-black tracking-tight text-foreground sm:text-3xl">Apontamentos</h2>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <UserRound className="h-3.5 w-3.5" />
+              {session?.user.nome || "Operador"}
             </p>
           </div>
+          {sessaoAtiva && (
+            <div className={"inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold " + (sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-600" : "border-green-500/25 bg-green-500/10 text-green-600")}>
+              <span className={"h-2 w-2 rounded-full " + (sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500")} />
+              {sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
+            </div>
+          )}
+        </header>
 
-          <div className="p-6 space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Posto de trabalho</label>
+        <div className="grid items-start gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="space-y-4 lg:sticky lg:top-0">
+            <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Posto de trabalho</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Selecione onde a produção será registrada</p>
+                </div>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10">
+                  <Factory className="h-5 w-5 text-primary" />
+                </div>
+              </div>
+
               {postos.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
-                  Você ainda não possui um posto de trabalho autorizado. Procure o administrador.
+                <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-4 text-xs text-muted-foreground">
+                  Você ainda não possui um posto autorizado. Procure o administrador.
                 </div>
               ) : (
-                <Select value={postoSelecionadoId} onValueChange={(v) => {
-                  if (sessoes.length > 0) { toast({ title: "Posto bloqueado", description: "Finalize o apontamento atual antes de trocar de posto.", variant: "destructive" }); return }
-                  setPostoSelecionadoId(v); setOrdemSelecionadaId(""); setOperacaoSelecionadaId(""); localStorage.setItem(`exata_posto_trabalho_${empresaAtivaId}`, v)
-                }} disabled={sessoes.length > 0}>
-                  <SelectTrigger className="w-full h-11 rounded-xl border border-border bg-input text-foreground text-sm"><SelectValue placeholder="Selecione seu posto" /></SelectTrigger>
-                  <SelectContent className="bg-card border-border">
-                    {postos.map(posto => <SelectItem key={posto.id} value={posto.id}>{posto.codigo} — {posto.nome}</SelectItem>)}
+                <Select
+                  value={postoSelecionadoId}
+                  onValueChange={(valor) => {
+                    if (sessoes.length > 0) {
+                      toast({ title: "Posto bloqueado", description: "Finalize o apontamento atual antes de trocar de posto.", variant: "destructive" })
+                      return
+                    }
+                    setPostoSelecionadoId(valor)
+                    setOrdemSelecionadaId("")
+                    setOperacaoSelecionadaId("")
+                    setBuscaTrabalho("")
+                    localStorage.setItem("exata_posto_trabalho_" + empresaAtivaId, valor)
+                  }}
+                  disabled={sessoes.length > 0}
+                >
+                  <SelectTrigger className="h-14 w-full rounded-2xl border-border bg-muted/35 px-4 text-left text-sm font-bold text-foreground">
+                    <SelectValue placeholder="Selecione seu posto" />
+                  </SelectTrigger>
+                  <SelectContent className="border-border bg-card">
+                    {postos.map(posto => (
+                      <SelectItem key={posto.id} value={posto.id}>
+                        {posto.codigo} — {posto.nome}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}
-              {postoSelecionadoId && <p className="text-[10px] text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3" /> {postos.find(p => p.id === postoSelecionadoId)?.setor || "Posto selecionado"}</p>}
-            </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ordem de Produção</label>
-              <Select value={ordemSelecionadaId} onValueChange={(v) => { setOrdemSelecionadaId(v); setOperacaoSelecionadaId("") }}>
-                <SelectTrigger className="w-full h-10 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all">
-                  <SelectValue placeholder="Selecione a OP" />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border">
-                  {resumos.filter(r => !r.fechada).map(r => {
-                    const desc = mapaDescricaoProdutos[r.op.produto_codigo]
-                    const prodTexto = desc ? `${r.op.produto_codigo} - ${desc}` : r.op.produto_codigo
-                    const opTitle = r.op.numero_op.toLowerCase().startsWith("op") ? r.op.numero_op : `OP ${r.op.numero_op}`
-                    return (
-                      <SelectItem key={r.op.id} value={r.op.id}>{opTitle} — {prodTexto}</SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {ordemAtual && (
-              <div className="bg-muted/40 rounded-xl p-4 space-y-1.5 text-xs">
-                <div className="flex justify-between items-center gap-2">
-                  <span className="text-muted-foreground flex-shrink-0">Produto</span>
-                  <span className="font-bold text-foreground text-right truncate" title={mapaDescricaoProdutos[ordemAtual.produto_codigo] ? `${ordemAtual.produto_codigo} - ${mapaDescricaoProdutos[ordemAtual.produto_codigo]}` : ordemAtual.produto_codigo}>
-                    {mapaDescricaoProdutos[ordemAtual.produto_codigo]
-                      ? `${ordemAtual.produto_codigo} - ${mapaDescricaoProdutos[ordemAtual.produto_codigo]}`
-                      : ordemAtual.produto_codigo}
+              {postoAtual && (
+                <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 text-primary" />
+                    {postoAtual.setor || "Posto selecionado"}
                   </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Quantidade</span>
-                  <span className="font-bold text-foreground">{ordemAtual.quantidade} peças</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Programada</span>
-                  <span className="font-bold text-foreground">{ordemAtual.data_programacao?.split("-").reverse().join("/")}</span>
-                </div>
-              </div>
-            )}
-
-            {ordemSelecionadaId && postoSelecionadoId && (
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Operações disponíveis neste posto</label>
-                {loadingOps ? (
-                  <div className="h-28 rounded-xl border border-border bg-muted animate-pulse" />
-                ) : operacoes.length === 0 ? (
-                  <p className="text-xs text-muted-foreground px-1">Nenhuma operação desta OP está liberada para o posto selecionado.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {operacoes.length > 5 && <div className="relative"><Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={buscaOperacao} onChange={e => setBuscaOperacao(e.target.value)} placeholder="Buscar operação" className="w-full h-9 pl-9 pr-3 rounded-xl border border-border bg-input text-xs" /></div>}
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {operacoes.filter(op => op.nome.toLowerCase().includes(buscaOperacao.toLowerCase())).map(op => (
-                        <button key={op.id} type="button" onClick={() => handleIniciar(op.id)} disabled={sessoes.length > 0} className="min-h-24 rounded-xl border border-border bg-muted/20 p-3 text-left hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 transition-all">
-                          <div className="flex items-start justify-between gap-2"><span className="text-xs font-bold text-foreground">{op.ordem}. {op.nome}</span><Play className="h-4 w-4 text-primary flex-shrink-0" /></div>
-                          <p className="mt-2 text-[10px] text-muted-foreground">{postos.find(p => p.id === postoSelecionadoId)?.codigo} · Disponível</p>
-                          <span className="mt-2 inline-block text-[10px] font-bold text-primary">Iniciar</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Lista de sessões ativas, uma por operação/máquina */}
-            {sessoes.length > 0 && (
-              <div className="space-y-3 pt-2 border-t border-border">
-                {sessoes.map(s => {
-                  const segundosDisplay = segundosMap[s.apontamentoId] ?? s.segundosAcumulados
-                  const emPausaEsta = !!s.pausaInicioTimestamp
-                  const ciclo = s.cicloPlanejadoSeg
-                  // O tempo decorrido é da sessão inteira (pode ter várias peças, não só uma).
-                  // Por isso o ritmo é avaliado dentro do ciclo atual (tempo decorrido % ciclo),
-                  // não pelo tempo total acumulado contra o ciclo de 1 peça só.
-                  const pecasNoTempo = ciclo && ciclo > 0 ? Math.floor(segundosDisplay / ciclo) : 0
-                  const tempoNoCicloAtual = ciclo && ciclo > 0 ? segundosDisplay - pecasNoTempo * ciclo : segundosDisplay
-                  const pct = ciclo && ciclo > 0 && segundosDisplay > 0 ? (tempoNoCicloAtual / ciclo) * 100 : null
-                  const semaforo = emPausaEsta
-                    ? { cor: "text-amber-500", bg: "bg-amber-500/10", borda: "border-amber-500/30", label: "Em pausa", barra: "bg-amber-500" }
-                    : pct === null
-                    ? { cor: "text-foreground", bg: "bg-muted/40", borda: "border-transparent", label: "Sem ciclo padrão", barra: "bg-primary" }
-                    : pct <= 90
-                    ? { cor: "text-green-600", bg: "bg-green-500/10", borda: "border-green-500/30", label: "Dentro do tempo", barra: "bg-green-500" }
-                    : pct <= 110
-                    ? { cor: "text-amber-500", bg: "bg-amber-500/10", borda: "border-amber-500/30", label: "No limite", barra: "bg-amber-500" }
-                    : { cor: "text-destructive", bg: "bg-destructive/10", borda: "border-destructive/30", label: "Tempo estourado", barra: "bg-destructive" }
-
-                  return (
-                    <div key={s.apontamentoId} className="rounded-xl border border-border p-3 space-y-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold text-foreground">{ordens.find(o => o.id === s.ordemId)?.numero_op}</span>
-                        <span className="text-muted-foreground">{s.maquinaNome}</span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground -mt-2">{s.operacaoNome}</p>
-
-                      <div className={`rounded-xl p-3 text-center space-y-1 border ${semaforo.bg} ${semaforo.borda} transition-all`}>
-                        <p className={`text-3xl font-black tabular-nums tracking-tight ${semaforo.cor}`}>
-                          {formatarTempo(segundosDisplay)}
-                        </p>
-                        <p className={`text-[10px] font-bold uppercase tracking-wider ${semaforo.cor}`}>
-                          {semaforo.label}
-                        </p>
-                        {ciclo && ciclo > 0 && (
-                          <div className="space-y-1 pt-1">
-                            <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full transition-all ${semaforo.barra}`} style={{ width: `${Math.min(100, pct ?? 0)}%` }} />
-                            </div>
-                            <p className="text-[10px] text-muted-foreground">
-                              Ciclo padrão: {formatarTempo(ciclo)} · Peça ~{pecasNoTempo + 1} do lote{pct !== null && ` — ${pct.toFixed(0)}%`}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        {emPausaEsta ? (
-                          <button
-                            onClick={() => handleRetomar(s.apontamentoId)}
-                            className="col-span-2 h-10 flex items-center justify-center gap-2 bg-green-600 text-white font-bold text-xs uppercase tracking-widest rounded-xl hover:opacity-90 transition-all"
-                          >
-                            <Play className="h-4 w-4" /> Retomar
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setSessaoEmAcaoId(s.apontamentoId)
-                              grupos.length > 0 ? setShowModalPausa(true) : toast({ title: "Cadastre exceções primeiro", description: "Vá em Exceções e crie grupos de parada.", variant: "destructive" })
-                            }}
-                            className="h-10 flex items-center justify-center gap-2 bg-amber-500 text-white font-bold text-xs uppercase tracking-widest rounded-xl hover:opacity-90 transition-all"
-                          >
-                            <Pause className="h-4 w-4" /> Pausar
-                          </button>
-                        )}
-                        <button
-                          onClick={() => { setSessaoEmAcaoId(s.apontamentoId); setShowModalFinalizar(true) }}
-                          className={`h-10 flex items-center justify-center gap-2 bg-card border border-border text-foreground font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-muted transition-all ${emPausaEsta ? "col-span-2" : ""}`}
-                        >
-                          <Square className="h-4 w-4" /> Finalizar
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Painel histórico preservado temporariamente, mas removido da interface de apontamentos. */}
-        <div className="hidden" aria-hidden="true">
-          <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-border space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-primary" /> Acompanhamento de OPs
-                  </h3>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">Planejado x realizado por ordem de produção</p>
-                </div>
-                {/* Abas de filtro */}
-                <div className="flex items-center gap-1 bg-muted p-1 rounded-xl text-xs font-bold self-start sm:self-auto">
-                  <button
-                    onClick={() => setFiltroStatusOP("ativas")}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "ativas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    Ativas ({resumos.filter(r => !r.fechada).length})
-                  </button>
-                  <button
-                    onClick={() => setFiltroStatusOP("encerradas")}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "encerradas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    Encerradas ({resumos.filter(r => r.fechada).length})
-                  </button>
-                  <button
-                    onClick={() => setFiltroStatusOP("todas")}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${filtroStatusOP === "todas" ? "bg-card text-foreground shadow-sm font-bold" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    Todas ({resumos.length})
-                  </button>
-                </div>
-              </div>
-
-              {/* Campo de Busca */}
-              <div className="relative">
-                <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Buscar por OP, código ou descrição do produto..."
-                  value={buscaOP}
-                  onChange={(e) => setBuscaOP(e.target.value)}
-                  className="w-full h-9 pl-9 pr-4 rounded-xl border border-border bg-input text-xs text-foreground outline-none focus:ring-2 focus:ring-primary transition-all"
-                />
-                {buscaOP && (
-                  <button onClick={() => setBuscaOP("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs">
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
-              {resumosFiltrados.length === 0 && (
-                <div className="flex flex-col items-center justify-center py-16 text-center px-6">
-                  <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-4">
-                    <ClipboardList className="h-6 w-6 text-muted-foreground" />
-                  </div>
-                  <p className="text-sm font-bold text-foreground">
-                    {buscaOP ? "Nenhuma OP encontrada" : filtroStatusOP === "encerradas" ? "Nenhuma OP encerrada" : "Nenhuma OP ativa"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {buscaOP ? `Nenhum resultado corresponde a "${buscaOP}"` : filtroStatusOP === "encerradas" ? "OPs concluídas aparecerão aqui para consulta de histórico." : "Crie ordens de produção no módulo PCP para começar."}
-                  </p>
+                  <span className="rounded-full bg-green-500/10 px-2 py-0.5 font-bold text-green-600">Ativo</span>
                 </div>
               )}
+            </section>
 
-              {resumosFiltrados.map(resumo => {
-                const badge = badgeStatus({
-                  fechada: resumo.fechada,
-                  emAndamento: resumo.emAndamento,
-                  temApontamento: resumo.temApontamento,
-                })
-                const expandida = opExpandida === resumo.op.id
+            <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+              <div className="border-b border-border p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Trabalhos liberados</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {postoAtual ? "OPs com operações disponíveis neste posto" : "Selecione um posto para continuar"}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black text-primary">
+                    {trabalhosDisponiveis.length}
+                  </span>
+                </div>
 
-                return (
-                  <div key={resumo.op.id} className="p-5">
-                    <div className="flex items-start justify-between cursor-pointer" onClick={() => setOpExpandida(expandida ? null : resumo.op.id)}>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-bold text-foreground">{resumo.op.numero_op.toLowerCase().startsWith("op") ? resumo.op.numero_op : `OP ${resumo.op.numero_op}`}</span>
-                          {(() => {
-                            const desc = mapaDescricaoProdutos[resumo.op.produto_codigo]
-                            const prodTexto = desc ? `${resumo.op.produto_codigo} - ${desc}` : resumo.op.produto_codigo
-                            return (
-                              <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[220px]" title={prodTexto}>{prodTexto}</span>
-                            )
-                          })()}
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.classes}`}>{badge.label}</span>
-                          {resumo.fechada && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleReabrirOP(resumo.op.id)
-                              }}
-                              className="text-[10px] font-bold px-2 py-0.5 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 rounded-full border border-amber-500/20 flex items-center gap-1 transition-colors"
-                              title="Reabrir OP para continuar produção"
-                            >
-                              <RotateCcw className="h-3 w-3" /> Reabrir
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Meta: <strong className="text-foreground">{resumo.op.quantidade} peças</strong>
-                          {" · "}Programada: <strong className="text-foreground">{resumo.op.data_programacao?.split("-").reverse().join("/")}</strong>
-                        </p>
-                      </div>
-                      <div className="text-right ml-4 flex-shrink-0">
-                        <p className="text-xl font-bold text-foreground">{resumo.pct.toFixed(0)}%</p>
-                        <p className="text-[10px] text-muted-foreground">{resumo.totalProduzidas}/{resumo.op.quantidade} pç</p>
-                      </div>
-                    </div>
+                {postoAtual && (
+                  <div className="relative mt-4">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      value={buscaTrabalho}
+                      onChange={evento => setBuscaTrabalho(evento.target.value)}
+                      placeholder="Buscar OP ou produto"
+                      className="h-10 w-full rounded-xl border border-border bg-input pl-9 pr-3 text-xs text-foreground outline-none transition-all focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                )}
+              </div>
 
-                    <div className="mt-3 h-2 bg-muted rounded-full overflow-hidden relative">
-                      <div
-                        className={`h-full rounded-full transition-all relative overflow-hidden ${resumo.fechada || resumo.pct >= 100 ? "bg-blue-500" : resumo.pct > 0 ? "bg-green-500" : "bg-amber-500"}`}
-                        style={{ width: `${resumo.pct}%` }}
+              <div className="space-y-2.5 p-3 lg:max-h-[calc(100vh-20rem)] lg:min-h-[390px] lg:overflow-y-auto">
+                {!postoAtual ? (
+                  <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+                    <Factory className="h-8 w-8 text-muted-foreground/50" />
+                    <p className="mt-3 text-sm font-bold text-foreground">Escolha seu posto</p>
+                    <p className="mt-1 text-xs text-muted-foreground">A fila será filtrada pelas operações permitidas.</p>
+                  </div>
+                ) : loadingTrabalhos ? (
+                  [0, 1, 2].map(item => <div key={item} className="h-28 animate-pulse rounded-2xl bg-muted" />)
+                ) : trabalhosDisponiveis.length === 0 ? (
+                  <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+                    <ClipboardList className="h-8 w-8 text-muted-foreground/50" />
+                    <p className="mt-3 text-sm font-bold text-foreground">Nenhum trabalho liberado</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {buscaTrabalho ? "Tente buscar por outro código ou número de OP." : "Não há OP ativa compatível com este posto."}
+                    </p>
+                  </div>
+                ) : (
+                  trabalhosDisponiveis.map(resumo => {
+                    const selecionado = ordemEmExibicao?.id === resumo.op.id
+                    const emExecucao = sessaoAtiva?.ordemId === resumo.op.id
+                    const descricao = mapaDescricaoProdutos[resumo.op.produto_codigo] || "Produto sem descrição"
+                    const tituloOP = resumo.op.numero_op.toLowerCase().startsWith("op") ? resumo.op.numero_op : "OP " + resumo.op.numero_op
+
+                    return (
+                      <button
+                        key={resumo.op.id}
+                        type="button"
+                        onClick={() => {
+                          if (sessaoAtiva && sessaoAtiva.ordemId !== resumo.op.id) {
+                            toast({ title: "Operação em andamento", description: "Finalize o apontamento atual antes de selecionar outro trabalho.", variant: "destructive" })
+                            return
+                          }
+                          setOrdemSelecionadaId(resumo.op.id)
+                          setOperacaoSelecionadaId("")
+                          setBuscaOperacao("")
+                        }}
+                        className={"group w-full rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " + (selecionado ? "border-primary bg-primary/5 shadow-sm shadow-primary/10" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
                       >
-                        {!resumo.fechada && resumo.pct > 0 && <div className="progress-shimmer" />}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex gap-4 text-[11px]">
-                      {resumo.totalSegundos > 0 && (
-                        <span className="text-muted-foreground flex items-center gap-1">
-                          <Clock className="h-3 w-3" /> {formatarTempo(resumo.totalSegundos)}
-                        </span>
-                      )}
-                      {resumo.totalRefugo > 0 && (
-                        <span className="text-destructive flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> {resumo.totalRefugo} refugo
-                        </span>
-                      )}
-                      {resumo.totalRetrabalho > 0 && (
-                        <span className="text-amber-500 flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> {resumo.totalRetrabalho} retrabalho
-                        </span>
-                      )}
-                      {resumo.aps.length > 0 && (
-                        <span className="text-muted-foreground">{resumo.aps.length} apontamento{resumo.aps.length > 1 ? "s" : ""}</span>
-                      )}
-                    </div>
-
-                    {expandida && resumo.aps.length > 0 && (
-                      <div className="mt-4 space-y-2">
-                        <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Histórico</p>
-                        {resumo.aps.map(ap => (
-                          <div key={ap.id} className="flex items-start justify-between p-3 bg-muted/30 border border-border rounded-xl text-xs gap-3">
-                            <div className="flex flex-col gap-0.5 min-w-0">
-                              <span className="font-bold text-foreground">{ap.operacao_nome || "Operação"}</span>
-                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                <span className="text-muted-foreground flex items-center gap-1">
-                                  <Clock className="h-3 w-3" /> {formatarTempo(ap.cronometro_total_segundos || 0)}
-                                </span>
-                                <span className="text-foreground font-bold">{ap.pecas_produzidas} pç</span>
-                                {ap.pecas_refugo > 0 && <span className="text-destructive">{ap.pecas_refugo} refugo</span>}
-                                {ap.pecas_retrabalho > 0 && <span className="text-amber-500">{ap.pecas_retrabalho} retrabalho</span>}
-                              </div>
-                              {ap.encerramento && ap.encerramento !== "continuar" && (
-                                <span className="text-[10px] text-muted-foreground italic mt-0.5">
-                                  {ap.encerramento === "encerrar" ? "OP encerrada" : "Encerramento parcial"}
-                                </span>
-                              )}
+                        <div className="flex items-center gap-3">
+                          <div className={"flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border " + (selecionado ? "border-primary/20 bg-primary/10" : "border-border bg-card")}>
+                            <Package className={"h-7 w-7 " + (selecionado ? "text-primary" : "text-muted-foreground")} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-black uppercase text-primary">{tituloOP}</span>
+                              {emExecucao && <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" title="Em execução" />}
+                            </div>
+                            <p className="mt-1.5 text-sm font-black text-primary">{resumo.op.produto_codigo}</p>
+                            <p className="truncate text-xs font-semibold text-foreground" title={descricao}>{descricao}</p>
+                            <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+                              <span>{resumo.op.quantidade} peças</span>
+                              <span>·</span>
+                              <span>{resumo.op.data_programacao?.split("-").reverse().join("/")}</span>
                             </div>
                           </div>
-                        ))}
+                          <ChevronRight className={"h-4 w-4 shrink-0 transition-transform group-hover:translate-x-0.5 " + (selecionado ? "text-primary" : "text-muted-foreground")} />
+                        </div>
+                        {resumo.pct > 0 && (
+                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary transition-all" style={{ width: Math.min(100, resumo.pct) + "%" }} />
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+          </aside>
+
+          <main className="min-w-0 space-y-5">
+            {!postoAtual ? (
+              <section className="flex min-h-[560px] flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/60 px-6 text-center">
+                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10">
+                  <Factory className="h-9 w-9 text-primary" />
+                </div>
+                <h3 className="mt-5 text-xl font-black text-foreground">Selecione um posto de trabalho</h3>
+                <p className="mt-2 max-w-md text-sm text-muted-foreground">A Exata exibirá apenas as OPs e operações autorizadas para o posto escolhido.</p>
+              </section>
+            ) : !ordemEmExibicao ? (
+              <section className="flex min-h-[560px] flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/60 px-6 text-center">
+                <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/10">
+                  <ClipboardList className="h-9 w-9 text-primary" />
+                </div>
+                <h3 className="mt-5 text-xl font-black text-foreground">Escolha um trabalho da fila</h3>
+                <p className="mt-2 max-w-md text-sm text-muted-foreground">Selecione uma OP à esquerda para visualizar o produto e iniciar uma das operações disponíveis.</p>
+              </section>
+            ) : (
+              <>
+                <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+                  <div className="grid gap-6 p-5 sm:p-7 md:grid-cols-[minmax(0,1fr)_220px]">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Produto selecionado</p>
+                        <span className="rounded-full border border-border bg-muted/50 px-2.5 py-1 text-[10px] font-black text-foreground">
+                          {ordemEmExibicao.numero_op.toLowerCase().startsWith("op") ? ordemEmExibicao.numero_op : "OP " + ordemEmExibicao.numero_op}
+                        </span>
+                      </div>
+                      <p className="mt-5 text-2xl font-black tracking-tight text-primary sm:text-3xl">{ordemEmExibicao.produto_codigo}</p>
+                      <h3 className="mt-1 text-2xl font-black leading-tight text-foreground sm:text-3xl">
+                        {mapaDescricaoProdutos[ordemEmExibicao.produto_codigo] || "Produto sem descrição"}
+                      </h3>
+
+                      <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl bg-muted/40 p-3">
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Package className="h-3.5 w-3.5" /> Meta</p>
+                          <p className="mt-1 text-sm font-black text-foreground">{ordemEmExibicao.quantidade} peças</p>
+                        </div>
+                        <div className="rounded-2xl bg-muted/40 p-3">
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><CalendarDays className="h-3.5 w-3.5" /> Programada</p>
+                          <p className="mt-1 text-sm font-black text-foreground">{ordemEmExibicao.data_programacao?.split("-").reverse().join("/")}</p>
+                        </div>
+                        <div className="rounded-2xl bg-muted/40 p-3">
+                          <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground"><Gauge className="h-3.5 w-3.5" /> Progresso</p>
+                          <p className="mt-1 text-sm font-black text-foreground">{(resumoEmExibicao?.pct || 0).toFixed(0)}%</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="relative mx-auto flex aspect-square w-full max-w-[220px] items-center justify-center overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-primary/15 via-muted/40 to-background">
+                      <div className="absolute inset-5 rounded-[1.5rem] border border-primary/10 bg-card/50" />
+                      <Package className="relative h-24 w-24 text-primary/65" strokeWidth={1.2} />
+                      <span className="absolute bottom-5 rounded-full border border-border bg-card/90 px-3 py-1 text-[10px] font-black text-primary shadow-sm">
+                        {ordemEmExibicao.produto_codigo}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-border p-5 sm:p-7">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Operações disponíveis</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Escolha a etapa que será executada em {postoAtual.codigo}.</p>
+                      </div>
+                      {operacoes.length > 5 && (
+                        <div className="relative w-full sm:w-56">
+                          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <input
+                            value={buscaOperacao}
+                            onChange={evento => setBuscaOperacao(evento.target.value)}
+                            placeholder="Buscar operação"
+                            className="h-9 w-full rounded-xl border border-border bg-input pl-9 pr-3 text-xs text-foreground"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {loadingOps ? (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div className="h-24 animate-pulse rounded-2xl bg-muted" />
+                        <div className="h-24 animate-pulse rounded-2xl bg-muted" />
+                      </div>
+                    ) : operacoes.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
+                        Nenhuma operação desta OP está liberada para o posto selecionado.
+                      </div>
+                    ) : (
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        {operacoes
+                          .filter(operacao => operacao.nome.toLowerCase().includes(buscaOperacao.toLowerCase()))
+                          .map(operacao => {
+                            const selecionada = operacaoEmExibicao?.id === operacao.id
+                            return (
+                              <button
+                                key={operacao.id}
+                                type="button"
+                                onClick={() => !sessaoAtiva && setOperacaoSelecionadaId(operacao.id)}
+                                disabled={!!sessaoAtiva}
+                                className={"flex min-h-24 items-center gap-3 rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default " + (selecionada ? "border-primary bg-primary/5 shadow-sm shadow-primary/10" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
+                              >
+                                <div className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl " + (selecionada ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary")}>
+                                  <Layers3 className="h-5 w-5" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Etapa {operacao.ordem}</p>
+                                  <p className="mt-1 text-sm font-black text-foreground">{operacao.nome}</p>
+                                  <p className="mt-1 text-[10px] font-bold text-primary">{selecionada ? "Selecionada" : "Disponível"}</p>
+                                </div>
+                                {selecionada && <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />}
+                              </button>
+                            )
+                          })}
                       </div>
                     )}
 
-                    {expandida && resumo.aps.length === 0 && (
-                      <div className="mt-4 px-3 py-4 bg-muted/20 border border-dashed border-border rounded-xl text-center">
-                        <p className="text-xs text-muted-foreground">Nenhum apontamento para esta OP ainda.</p>
+                    {!sessaoAtiva && (
+                      <button
+                        type="button"
+                        onClick={() => operacaoSelecionadaId && handleIniciar(operacaoSelecionadaId)}
+                        disabled={!operacaoSelecionadaId || loadingOps}
+                        className="mt-5 flex min-h-24 w-full items-center justify-center gap-4 rounded-3xl bg-green-600 px-5 text-left text-white shadow-lg shadow-green-600/20 transition-all hover:bg-green-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+                      >
+                        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-green-600 shadow-sm">
+                          <Play className="h-6 w-6 fill-current" />
+                        </span>
+                        <span>
+                          <span className="block text-xl font-black">{operacaoSelecionadaId ? "Iniciar operação" : "Selecione uma operação"}</span>
+                          <span className="mt-1 block text-xs font-medium opacity-85">{operacaoSelecionadaId ? "Iniciar contagem do tempo neste posto" : "Escolha uma das etapas disponíveis acima"}</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {sessaoAtiva && (
+                      <div className="mt-5 flex items-center gap-3 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-green-700 dark:text-green-400">
+                        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-green-500" />
+                        <div>
+                          <p className="text-sm font-black">{sessaoAtiva.operacaoNome}</p>
+                          <p className="text-[11px] font-medium opacity-80">A operação está sendo registrada em {postoAtual.codigo}.</p>
+                        </div>
                       </div>
                     )}
                   </div>
-                )
-              })}
-            </div>
-          </div>
+                </section>
+
+                {sessaoAtiva && (
+                  <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+                    <div className="flex flex-col gap-3 border-b border-border p-5 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+                      <div>
+                        <p className={"flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] " + ritmo.texto}>
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ritmo.cor }} />
+                          {ritmo.label}
+                        </p>
+                        <h3 className="mt-2 text-2xl font-black text-foreground">{sessaoAtiva.operacaoNome}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {ordemEmExibicao.produto_codigo} · {mapaDescricaoProdutos[ordemEmExibicao.produto_codigo] || "Produto sem descrição"}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-muted/40 px-4 py-3 text-left sm:text-right">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Posto atual</p>
+                        <p className="mt-1 text-sm font-black text-foreground">{postoAtual.codigo}</p>
+                      </div>
+                    </div>
+
+                    <div className="p-5 sm:p-7">
+                      <div className="mx-auto flex max-w-xl flex-col items-center">
+                        <div
+                          className="flex h-64 w-64 items-center justify-center rounded-full p-3 sm:h-72 sm:w-72"
+                          style={{ background: "conic-gradient(" + ritmo.cor + " " + (cicloAtivo ? percentualCiclo : 100) + "%, hsl(var(--muted)) 0)" }}
+                        >
+                          <div className="flex h-full w-full flex-col items-center justify-center rounded-full border border-border bg-card text-center shadow-inner">
+                            <Gauge className={"h-7 w-7 " + ritmo.texto} />
+                            <p className={"mt-2 text-[10px] font-black uppercase tracking-[0.14em] " + ritmo.texto}>{ritmo.detalhe}</p>
+                            <p className="mt-2 text-5xl font-black tabular-nums tracking-tight text-foreground sm:text-6xl">
+                              {formatarTempo(segundosAtivos)}
+                            </p>
+                            <span className="mt-3 rounded-full bg-muted px-3 py-1 text-xs font-bold text-muted-foreground">
+                              {cicloAtivo ? "Ciclo padrão: " + formatarTempo(cicloAtivo) : "Tempo da operação"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-6 grid w-full gap-3 sm:grid-cols-2">
+                          <div className="rounded-2xl border border-border bg-muted/25 p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Produção da OP</p>
+                            <p className="mt-1 text-lg font-black text-foreground">
+                              {resumoEmExibicao?.totalProduzidas || 0} <span className="text-xs font-medium text-muted-foreground">de {ordemEmExibicao.quantidade} peças</span>
+                            </p>
+                          </div>
+                          <div className="rounded-2xl border border-border bg-muted/25 p-4">
+                            <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Orientação</p>
+                            <p className="mt-1 text-sm font-black text-foreground">
+                              {sessaoEmPausa ? "Retome quando estiver pronto" : cicloAtivo ? "Acompanhe o ciclo padrão" : "Registre qualquer interrupção"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-muted/25 p-4">
+                          <Clock className={"h-6 w-6 shrink-0 " + ritmo.texto} />
+                          <div>
+                            <p className="text-sm font-black text-foreground">{sessaoEmPausa ? "Cronômetro em pausa" : "Tempo sendo registrado automaticamente"}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {sessaoEmPausa ? "O período parado não será somado ao tempo produtivo." : "Use Pausar para registrar intervalos, falhas ou manutenção."}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 grid w-full gap-3 sm:grid-cols-2">
+                          {sessaoEmPausa ? (
+                            <button
+                              type="button"
+                              onClick={() => handleRetomar(sessaoAtiva.apontamentoId)}
+                              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-green-600 text-sm font-black text-white transition-colors hover:bg-green-500"
+                            >
+                              <Play className="h-5 w-5 fill-current" /> Retomar operação
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
+                                grupos.length > 0
+                                  ? setShowModalPausa(true)
+                                  : toast({ title: "Cadastre exceções primeiro", description: "Vá em Exceções e crie grupos de parada.", variant: "destructive" })
+                              }}
+                              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-black text-white transition-colors hover:bg-amber-400"
+                            >
+                              <Pause className="h-5 w-5" /> Pausar operação
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
+                              setShowModalFinalizar(true)
+                            }}
+                            className="flex h-14 items-center justify-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 text-sm font-black text-destructive transition-colors hover:bg-destructive/10"
+                          >
+                            <Square className="h-5 w-5" /> Finalizar e registrar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                )}
+              </>
+            )}
+          </main>
         </div>
       </div>
+
     </div>
   )
 }
