@@ -19,6 +19,160 @@ create unique index if not exists movimentacoes_producao_apontamento_item_uidx
   )
   where origem = 'producao' and referencia_id is not null;
 
+create index if not exists apontamentos_quantidade_operacao_idx
+  on public.apontamentos (empresa_id, ordem_id, operacao_id)
+  include (pecas_produzidas, status);
+
+-- Serializa os apontamentos pela OP e impede que duas finalizações concorrentes
+-- ultrapassem, juntas, a quantidade planejada da mesma operação.
+create or replace function public.validar_quantidade_planejada_apontamento()
+returns trigger
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_quantidade_planejada integer;
+  v_total_outros integer;
+  v_quantidade_restante integer;
+begin
+  if new.empresa_id is null or new.operacao_id is null then
+    return new;
+  end if;
+
+  if coalesce(new.pecas_produzidas, 0) < 0
+     or coalesce(new.pecas_refugo, 0) < 0
+     or coalesce(new.pecas_retrabalho, 0) < 0 then
+    raise exception 'As quantidades do apontamento não podem ser negativas' using errcode = '22023';
+  end if;
+
+  if coalesce(new.pecas_refugo, 0) > coalesce(new.pecas_produzidas, 0) then
+    raise exception 'A quantidade de refugo não pode superar a produção apontada' using errcode = '23514';
+  end if;
+
+  if coalesce(new.pecas_retrabalho, 0) > coalesce(new.pecas_produzidas, 0) then
+    raise exception 'A quantidade de retrabalho não pode superar a produção apontada' using errcode = '23514';
+  end if;
+
+  select op.quantidade
+    into v_quantidade_planejada
+  from public.ordens_producao op
+  where op.id = new.ordem_id
+    and op.empresa_id = new.empresa_id
+  for update;
+
+  if not found then
+    raise exception 'Ordem de produção não encontrada para validar o apontamento' using errcode = '23503';
+  end if;
+
+  select coalesce(sum(a.pecas_produzidas), 0)::integer
+    into v_total_outros
+  from public.apontamentos a
+  where a.empresa_id = new.empresa_id
+    and a.ordem_id = new.ordem_id
+    and a.operacao_id = new.operacao_id
+    and a.id <> new.id
+    and a.status is distinct from 'cancelado';
+
+  v_quantidade_restante := greatest(v_quantidade_planejada - v_total_outros, 0);
+
+  if new.status = 'em_andamento' and v_quantidade_restante = 0 then
+    raise exception 'A quantidade planejada desta operação já foi totalmente apontada' using errcode = '23514';
+  end if;
+
+  if v_total_outros + coalesce(new.pecas_produzidas, 0) > v_quantidade_planejada then
+    raise exception 'Quantidade superior ao planejado. Restam % peças para esta operação', v_quantidade_restante
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists apontamentos_validar_quantidade_planejada_insert on public.apontamentos;
+create trigger apontamentos_validar_quantidade_planejada_insert
+before insert on public.apontamentos
+for each row execute function public.validar_quantidade_planejada_apontamento();
+
+drop trigger if exists apontamentos_validar_quantidade_planejada_update on public.apontamentos;
+create trigger apontamentos_validar_quantidade_planejada_update
+before update of empresa_id, ordem_id, operacao_id, pecas_produzidas, pecas_refugo, pecas_retrabalho, status
+on public.apontamentos
+for each row execute function public.validar_quantidade_planejada_apontamento();
+
+revoke all on function public.validar_quantidade_planejada_apontamento()
+  from public, anon, authenticated;
+
+-- Somente a última operação encerra a OP. O encerramento acontece por decisão
+-- explícita ou quando o acumulado chega exatamente à meta (o excedente é barrado antes).
+create or replace function public.encerrar_op_ao_atingir_planejado()
+returns trigger
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_quantidade_planejada integer;
+  v_produto_id uuid;
+  v_ultima_operacao_id uuid;
+  v_total_operacao integer;
+begin
+  if new.empresa_id is null or new.operacao_id is null or new.status = 'em_andamento' then
+    return new;
+  end if;
+
+  select op.quantidade, p.id
+    into v_quantidade_planejada, v_produto_id
+  from public.ordens_producao op
+  join public.produtos p
+    on p.empresa_id = op.empresa_id
+   and p.codigo = op.produto_codigo
+  where op.id = new.ordem_id
+    and op.empresa_id = new.empresa_id;
+
+  if not found then
+    return new;
+  end if;
+
+  select o.id
+    into v_ultima_operacao_id
+  from public.operacoes o
+  where o.empresa_id = new.empresa_id
+    and o.produto_id = v_produto_id
+  order by o.ordem desc nulls last, o.id
+  limit 1;
+
+  if v_ultima_operacao_id is distinct from new.operacao_id then
+    return new;
+  end if;
+
+  select coalesce(sum(a.pecas_produzidas), 0)::integer
+    into v_total_operacao
+  from public.apontamentos a
+  where a.empresa_id = new.empresa_id
+    and a.ordem_id = new.ordem_id
+    and a.operacao_id = new.operacao_id
+    and a.status is distinct from 'cancelado';
+
+  if new.encerramento = 'encerrar' or v_total_operacao >= v_quantidade_planejada then
+    update public.ordens_producao
+    set status = 'encerrada'
+    where id = new.ordem_id
+      and empresa_id = new.empresa_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists apontamentos_encerrar_op_ao_atingir_planejado on public.apontamentos;
+create trigger apontamentos_encerrar_op_ao_atingir_planejado
+after update of pecas_produzidas, status, encerramento on public.apontamentos
+for each row execute function public.encerrar_op_ao_atingir_planejado();
+
+revoke all on function public.encerrar_op_ao_atingir_planejado()
+  from public, anon, authenticated;
+
 create or replace function public.finalizar_apontamento_estoque(
   p_empresa_id uuid,
   p_apontamento_id uuid,
@@ -72,8 +226,8 @@ begin
     raise exception 'Apontamento não encontrado ou não pertence ao operador atual' using errcode = '42501';
   end if;
 
-  if v_apontamento.status <> 'fechado'
-     or v_apontamento.encerramento not in ('encerrar', 'encerrar_parcial') then
+  if v_apontamento.status not in ('aberto', 'fechado')
+     or v_apontamento.encerramento not in ('continuar', 'encerrar', 'encerrar_parcial') then
     raise exception 'O apontamento ainda não está pronto para movimentar estoque' using errcode = '23514';
   end if;
 
