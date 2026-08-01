@@ -342,7 +342,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [opsRes, apRes, gRes, sRes, prodRes, postosRes] = await Promise.all([
+      const [opsRes, apRes, gRes, sRes, postosRes] = await Promise.all([
         supabase.from("ordens_producao")
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!)
@@ -353,9 +353,19 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           .order("created_at", { ascending: false }),
         supabase.from("excecao_grupos").select("id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
         supabase.from("excecao_subgrupos").select("id, grupo_id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
-        supabase.from("produtos").select("codigo, descricao, operacoes(id, ordem)").eq("empresa_id", empresaAtivaId!),
         supabase.rpc("meus_postos_trabalho"),
       ])
+
+      const codigosProdutos = Array.from(new Set(
+        (opsRes.data || []).map((ordem: any) => ordem.produto_codigo).filter(Boolean)
+      )) as string[]
+      const prodRes = codigosProdutos.length > 0
+        ? await supabase
+            .from("produtos")
+            .select("codigo, descricao, operacoes(id, ordem)")
+            .eq("empresa_id", empresaAtivaId!)
+            .in("codigo", codigosProdutos)
+        : { data: [], error: null }
 
       if (opsRes.error) {
         console.error("Erro buscar OPs:", opsRes.error)
@@ -365,6 +375,11 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       if (apRes.error) {
         console.error("Erro buscar Apontamentos:", apRes.error)
         toast({ title: "Falha ao buscar Apontamentos", description: apRes.error.message, variant: "destructive" })
+      }
+
+      if (prodRes.error) {
+        console.error("Erro buscar produtos das OPs:", prodRes.error)
+        toast({ title: "Falha ao buscar produtos", description: prodRes.error.message, variant: "destructive" })
       }
 
       setOrdens((opsRes.data || []) as OrdemProducao[])

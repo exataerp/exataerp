@@ -53,7 +53,7 @@ interface AuthContextType {
 
   // Auth actions
   signIn:        (email: string, senha: string) => Promise<{ error: string | null }>
-  signOut:       () => Promise<void>
+  signOut:       () => Promise<{ error: string | null }>
   reloadSession: () => Promise<void>
 
   // Helpers de roles
@@ -71,7 +71,7 @@ const AuthContext = createContext<AuthContextType>({
   session:        null,
   loading:        true,
   signIn:         async () => ({ error: null }),
-  signOut:        async () => {},
+  signOut:        async () => ({ error: null }),
   reloadSession:  async () => {},
   hasRole:        () => false,
   canAccess:      () => false,
@@ -196,9 +196,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    const { error } = await supabase.auth.signOut({ scope: 'local' })
+    if (error) return { error: error.message }
+
     setSession(null)
     setSupabaseUser(null)
+    return { error: null }
   }
 
   const reloadSession = async () => {

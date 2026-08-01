@@ -81,6 +81,7 @@ export default function ExataApp() {
   const [collapsed,    setCollapsed]    = useState(false)
   const [mobileOpen,   setMobileOpen]   = useState(false)
   const [mounted,      setMounted]      = useState(false)
+  const [isSigningOut, setIsSigningOut] = useState(false)
   const [showAlertas,  setShowAlertas]  = useState(false)
   const [alertas,      setAlertas]      = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
   const { theme, setTheme } = useTheme()
@@ -123,6 +124,12 @@ export default function ExataApp() {
       window.history.replaceState({}, "", "/?tab=configuracoes")
     }
   }, [])
+
+  useEffect(() => {
+    if (!authLoading && !session) {
+      window.location.replace("/login")
+    }
+  }, [authLoading, session])
 
   // Carrega dados quando empresa estiver disponível
   useEffect(() => {
@@ -202,7 +209,33 @@ export default function ExataApp() {
   }
 
   // --- Sair ---
-  const handleSair = () => signOut()
+  const handleSair = async () => {
+    if (isSigningOut) return
+
+    setIsSigningOut(true)
+    try {
+      const { error } = await signOut()
+      if (error) {
+        toast({
+          title: "Não foi possível sair",
+          description: error,
+          variant: "destructive",
+        })
+        setIsSigningOut(false)
+        return
+      }
+
+      localStorage.removeItem(STORAGE_TAB)
+      window.location.replace("/login")
+    } catch {
+      toast({
+        title: "Não foi possível sair",
+        description: "Verifique sua conexão e tente novamente.",
+        variant: "destructive",
+      })
+      setIsSigningOut(false)
+    }
+  }
 
 
   const carregarConfFabrica = async (empId: string) => {
@@ -459,6 +492,14 @@ export default function ExataApp() {
     )
   }
 
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">Redirecionando para o login...</p>
+      </div>
+    )
+  }
+
   // ----------------------------------------------------------------
   // APP PRINCIPAL
   // ----------------------------------------------------------------
@@ -640,12 +681,13 @@ export default function ExataApp() {
             />
             <button
               onClick={handleSair}
+              disabled={isSigningOut}
               className={`w-full flex items-center rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all
-                ${collapsed ? "justify-center h-10 w-10 mx-auto" : "gap-3 px-3 py-3"}`}
+                disabled:cursor-wait disabled:opacity-60 ${collapsed ? "justify-center h-10 w-10 mx-auto" : "gap-3 px-3 py-3"}`}
               title={collapsed ? "Sair" : undefined}
             >
               <LogOut className="h-[18px] w-[18px] flex-shrink-0" />
-              {!collapsed && <span className="text-xs font-bold leading-tight">Sair</span>}
+              {!collapsed && <span className="text-xs font-bold leading-tight">{isSigningOut ? "Saindo..." : "Sair"}</span>}
             </button>
             {!collapsed && (
               <p className="text-[9px] text-muted-foreground/50 font-medium text-center pt-2 pb-1">
@@ -757,10 +799,11 @@ export default function ExataApp() {
             </button>
             <button
               onClick={handleSair}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all"
+              disabled={isSigningOut}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-all disabled:cursor-wait disabled:opacity-60"
             >
               <LogOut className="h-5 w-5 flex-shrink-0" />
-              <span className="text-sm font-bold">Sair</span>
+              <span className="text-sm font-bold">{isSigningOut ? "Saindo..." : "Sair"}</span>
             </button>
             <p className="text-[9px] text-muted-foreground/50 font-medium text-center pt-2">v4.0.0 Cloud</p>
           </div>
