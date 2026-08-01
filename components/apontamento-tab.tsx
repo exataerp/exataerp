@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/contexts/AuthContext"
 import { isPausaProgramada } from "@/components/relatorios-tab"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, Plus, Trash2, ClipboardList, TrendingUp,
   AlertTriangle, CheckCircle2, Clock, Package, Factory, ChevronDown, X, Wrench,
-  Search, RotateCcw
+  Search, RotateCcw, MapPin, UserRound
 } from "lucide-react"
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -99,6 +100,14 @@ function badgeStatus({
   if (emAndamento) return { label: "Em andamento", classes: "bg-primary/10 text-primary border border-primary/20" }
   if (temApontamento) return { label: "Iniciada", classes: "bg-green-500/10 text-green-600 border border-green-500/20" }
   return { label: "Agendada", classes: "bg-amber-500/10 text-amber-600 border border-amber-500/20" }
+}
+
+interface PostoTrabalho {
+  id: string
+  codigo: string
+  nome: string
+  setor?: string
+  status: string
 }
 
 // ─── Modal de Pausa ───────────────────────────────────────────────────────────
@@ -295,6 +304,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa }: {
 
 export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   const { toast } = useToast()
+  const { session } = useAuth()
 
   const [ordens, setOrdens] = useState<OrdemProducao[]>([])
   const [apontamentos, setApontamentos] = useState<Apontamento[]>([])
@@ -307,6 +317,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [operacoes, setOperacoes] = useState<Operacao[]>([])
   const [operacaoSelecionadaId, setOperacaoSelecionadaId] = useState("")
   const [loadingOps, setLoadingOps] = useState(false)
+  const [postos, setPostos] = useState<PostoTrabalho[]>([])
+  const [postoSelecionadoId, setPostoSelecionadoId] = useState("")
+  const [buscaOperacao, setBuscaOperacao] = useState("")
 
   // Sessões ativas (pode ter mais de uma rodando ao mesmo tempo, uma por operação/máquina)
   const [sessoes, setSessoes] = useState<SessaoAtiva[]>([])
@@ -335,7 +348,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const loadData = async () => {
     setLoading(true)
     try {
-      const [opsRes, apRes, gRes, sRes, prodRes] = await Promise.all([
+      const [opsRes, apRes, gRes, sRes, prodRes, postosRes] = await Promise.all([
         supabase.from("ordens_producao")
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!)
@@ -347,6 +360,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         supabase.from("excecao_grupos").select("id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
         supabase.from("excecao_subgrupos").select("id, grupo_id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
         supabase.from("produtos").select("codigo, descricao, operacoes(id, ordem)").eq("empresa_id", empresaAtivaId!),
+        supabase.rpc("meus_postos_trabalho"),
       ])
 
       if (opsRes.error) {
@@ -381,6 +395,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         subgrupos: (sRes.data || []).filter((s: any) => s.grupo_id === g.id),
       }))
       setGrupos(gruposFormatados)
+      const postosAtivos = (postosRes.data || []) as PostoTrabalho[]
+      setPostos(postosAtivos)
+      const salvo = localStorage.getItem(`exata_posto_trabalho_${empresaAtivaId}`)
+      if (salvo && postosAtivos.some((posto: PostoTrabalho) => posto.id === salvo)) {
+        setPostoSelecionadoId(salvo)
+      } else if (postosAtivos.length === 1) {
+        setPostoSelecionadoId(postosAtivos[0].id)
+      }
     } catch (err) {
       console.error("Erro critico na carga:", err)
     } finally {
@@ -433,7 +455,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   // ─── Carrega operações ao selecionar OP ────────────────────────────────────
 
   useEffect(() => {
-    if (!ordemSelecionadaId) { setOperacoes([]); setOperacaoSelecionadaId(""); return }
+    if (!ordemSelecionadaId || !postoSelecionadoId) { setOperacoes([]); setOperacaoSelecionadaId(""); return }
     const ordem = ordens.find(o => o.id === ordemSelecionadaId)
     if (!ordem) return
     setLoadingOps(true)
@@ -447,29 +469,38 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       .then(({ data: prod }) => {
         if (!prod) { setOperacoes([]); setLoadingOps(false); return }
         supabase
-          .from("operacoes")
-          .select("id, nome, maquina_id, ordem, maquinas(nome, codigo)")
-          .eq("produto_id", prod.id)
-          .order("ordem")
-          .then(({ data: ops }) => {
+          .from("operacao_postos_trabalho")
+          .select("operacao_id, operacoes!inner(id, nome, maquina_id, ordem, produto_id, maquinas(nome, codigo))")
+          .eq("empresa_id", empresaAtivaId!)
+          .eq("maquina_id", postoSelecionadoId)
+          .eq("ativo", true)
+          .eq("operacoes.produto_id", prod.id)
+          .order("ordem", { foreignTable: "operacoes" })
+          .then(({ data: ops, error }) => {
+            if (error) {
+              toast({ title: "Falha ao carregar operações", description: error.message, variant: "destructive" })
+              setOperacoes([])
+              setLoadingOps(false)
+              return
+            }
             const formatted: Operacao[] = (ops || []).map((o: any) => ({
-              id: o.id,
-              nome: o.nome,
-              maquina_id: o.maquina_id,
-              maquina_nome: o.maquinas?.nome,
-              maquina_codigo: o.maquinas?.codigo,
-              ordem: o.ordem,
+              id: o.operacoes.id,
+              nome: o.operacoes.nome,
+              maquina_id: o.operacoes.maquina_id,
+              maquina_nome: o.operacoes.maquinas?.nome,
+              maquina_codigo: o.operacoes.maquinas?.codigo,
+              ordem: o.operacoes.ordem,
             }))
             setOperacoes(formatted)
             setLoadingOps(false)
           })
       })
-  }, [ordemSelecionadaId])
+  }, [ordemSelecionadaId, postoSelecionadoId, empresaAtivaId, toast])
 
   // ─── Iniciar ───────────────────────────────────────────────────────────────
 
-  const handleIniciar = async () => {
-    if (!ordemSelecionadaId || !operacaoSelecionadaId) {
+  const handleIniciar = async (operacaoId = operacaoSelecionadaId) => {
+    if (!ordemSelecionadaId || !operacaoId || !postoSelecionadoId) {
       toast({ title: "Selecione a OP e a operação", variant: "destructive" })
       return
     }
@@ -484,11 +515,11 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       return
     }
 
-    const op = operacoes.find(o => o.id === operacaoSelecionadaId)
+    const op = operacoes.find(o => o.id === operacaoId)
     if (!op) return
 
-    if (sessoes.some(s => s.operacaoId === operacaoSelecionadaId)) {
-      toast({ title: "Essa operação já está em andamento", description: "Finalize ou pause antes de iniciar de novo.", variant: "destructive" })
+    if (sessoes.length > 0 || sessoes.some(s => s.operacaoId === operacaoId)) {
+      toast({ title: "Já existe um apontamento ativo", description: "Finalize o apontamento atual antes de iniciar outra operação.", variant: "destructive" })
       return
     }
 
@@ -496,57 +527,32 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const { data: opDb } = await supabase
       .from("operacoes")
       .select("tempo, unidade, maquina_id")
-      .eq("id", operacaoSelecionadaId)
+      .eq("id", operacaoId)
       .single()
 
     const cicloPlanejadoSeg = opDb
       ? (opDb.unidade === "minutes" ? opDb.tempo * 60 : opDb.tempo)
       : undefined
 
-    const maquinaIdDefinitiva = op.maquina_id || opDb?.maquina_id || null
-
-    const { data, error } = await supabase
-      .from("apontamentos")
-      .insert({
-        empresa_id: empresaAtivaId,
-        ordem_id: ordemSelecionadaId,
-        operacao_id: operacaoSelecionadaId,
-        operacao_nome: op.nome,
-        maquina_id: maquinaIdDefinitiva,
-        cronometro_inicio: new Date().toISOString(),
-        cronometro_total_segundos: 0,
-        pecas_produzidas: 0,
-        pecas_refugo: 0,
-        pecas_retrabalho: 0,
-        status: "em_andamento",
-        data_apontamento: new Date().toISOString().split("T")[0],
-        hora_inicio: new Date().toTimeString().slice(0, 5),
-        hora_fim: new Date().toTimeString().slice(0, 5),
-      })
-      .select()
-      .single()
+    const maquinaIdDefinitiva = postoSelecionadoId
+    const { data, error } = await supabase.rpc("iniciar_apontamento_no_posto", {
+      p_empresa_id: empresaAtivaId,
+      p_ordem_id: ordemSelecionadaId,
+      p_operacao_id: operacaoId,
+      p_maquina_id: postoSelecionadoId,
+    })
 
     if (error) { toast({ title: "Erro ao iniciar", description: error.message, variant: "destructive" }); return }
 
-    const { data: ordemAtualizada, error: statusError } = await supabase
-      .from("ordens_producao")
-      .update({ status: "em_andamento" })
-      .eq("id", ordemSelecionadaId)
-      .eq("empresa_id", empresaAtivaId!)
-      .select("id, status")
-      .single()
-
-    if (statusError) {
-      console.error("Erro ao sincronizar status da OP iniciada:", statusError)
-    }
+    const ordemAtualizada = { id: ordemSelecionadaId, status: "em_andamento" }
 
     const novaSessao: SessaoAtiva = {
       apontamentoId: data.id,
       ordemId: ordemSelecionadaId,
-      operacaoId: operacaoSelecionadaId,
+      operacaoId,
       operacaoNome: op.nome,
       maquinaId: maquinaIdDefinitiva ?? undefined,
-      maquinaNome: op.maquina_nome ? `${op.maquina_codigo} - ${op.maquina_nome}` : "Manual",
+      maquinaNome: postos.find(p => p.id === postoSelecionadoId)?.nome ?? "Posto de trabalho",
       inicioTimestamp: Date.now(),
       segundosAcumulados: 0,
       cicloPlanejadoSeg,
@@ -563,11 +569,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setOrdemSelecionadaId("")
     setOperacaoSelecionadaId("")
     toast({
-      title: statusError ? "Apontamento iniciado com ressalva" : "▶ Apontamento iniciado",
-      description: statusError
-        ? `${op.nome}. Não foi possível sincronizar o status da OP.`
-        : op.nome,
-      variant: statusError ? "destructive" : undefined,
+      title: "Apontamento iniciado",
+      description: op.nome,
     })
   }
 
@@ -1107,14 +1110,39 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         {/* Painel de controle */}
         <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-border">
-            <h3 className="text-sm font-bold text-foreground">Apontamento</h3>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Apontamentos</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1"><UserRound className="h-3 w-3" /> {session?.user.nome || "Usuário"}</p>
+              </div>
+              {sessoes.length > 0 && <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" title="Apontamento ativo" />}
+            </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              {sessoes.length > 0 ? `${sessoes.length} operação${sessoes.length > 1 ? "ões" : ""} em andamento` : "Selecione a OP e a operação para iniciar"}
+              {sessoes.length > 0 ? "Apontamento em andamento" : "Escolha um posto, uma OP e a operação"}
             </p>
           </div>
 
           <div className="p-6 space-y-4">
-            {/* Formulário de início — sempre visível, pode iniciar outra sessão mesmo com sessões já rodando */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Posto de trabalho</label>
+              {postos.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                  Você ainda não possui um posto de trabalho autorizado. Procure o administrador.
+                </div>
+              ) : (
+                <Select value={postoSelecionadoId} onValueChange={(v) => {
+                  if (sessoes.length > 0) { toast({ title: "Posto bloqueado", description: "Finalize o apontamento atual antes de trocar de posto.", variant: "destructive" }); return }
+                  setPostoSelecionadoId(v); setOrdemSelecionadaId(""); setOperacaoSelecionadaId(""); localStorage.setItem(`exata_posto_trabalho_${empresaAtivaId}`, v)
+                }} disabled={sessoes.length > 0}>
+                  <SelectTrigger className="w-full h-11 rounded-xl border border-border bg-input text-foreground text-sm"><SelectValue placeholder="Selecione seu posto" /></SelectTrigger>
+                  <SelectContent className="bg-card border-border">
+                    {postos.map(posto => <SelectItem key={posto.id} value={posto.id}>{posto.codigo} — {posto.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              {postoSelecionadoId && <p className="text-[10px] text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3" /> {postos.find(p => p.id === postoSelecionadoId)?.setor || "Posto selecionado"}</p>}
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ordem de Produção</label>
               <Select value={ordemSelecionadaId} onValueChange={(v) => { setOrdemSelecionadaId(v); setOperacaoSelecionadaId("") }}>
@@ -1155,40 +1183,29 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               </div>
             )}
 
-            {ordemSelecionadaId && (
+            {ordemSelecionadaId && postoSelecionadoId && (
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Operação</label>
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Operações disponíveis neste posto</label>
                 {loadingOps ? (
-                  <div className="h-11 rounded-xl border border-border bg-muted animate-pulse" />
+                  <div className="h-28 rounded-xl border border-border bg-muted animate-pulse" />
                 ) : operacoes.length === 0 ? (
-                  <p className="text-xs text-muted-foreground px-1">Nenhuma operação no roteiro deste produto.</p>
+                  <p className="text-xs text-muted-foreground px-1">Nenhuma operação desta OP está liberada para o posto selecionado.</p>
                 ) : (
-                  <Select value={operacaoSelecionadaId} onValueChange={setOperacaoSelecionadaId}>
-                    <SelectTrigger className="w-full h-10 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all">
-                      <SelectValue placeholder="Selecione a operação" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-card border-border">
-                      {operacoes.map(op => {
-                        const jaRodando = sessoes.some(s => s.operacaoId === op.id)
-                        return (
-                          <SelectItem key={op.id} value={op.id} disabled={jaRodando}>
-                            {op.ordem}. {op.nome}{op.maquina_codigo ? ` — ${op.maquina_codigo}` : ""}{jaRodando ? " (já em andamento)" : ""}
-                          </SelectItem>
-                        )
-                      })}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-2">
+                    {operacoes.length > 5 && <div className="relative"><Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" /><input value={buscaOperacao} onChange={e => setBuscaOperacao(e.target.value)} placeholder="Buscar operação" className="w-full h-9 pl-9 pr-3 rounded-xl border border-border bg-input text-xs" /></div>}
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {operacoes.filter(op => op.nome.toLowerCase().includes(buscaOperacao.toLowerCase())).map(op => (
+                        <button key={op.id} type="button" onClick={() => handleIniciar(op.id)} disabled={sessoes.length > 0} className="min-h-24 rounded-xl border border-border bg-muted/20 p-3 text-left hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 transition-all">
+                          <div className="flex items-start justify-between gap-2"><span className="text-xs font-bold text-foreground">{op.ordem}. {op.nome}</span><Play className="h-4 w-4 text-primary flex-shrink-0" /></div>
+                          <p className="mt-2 text-[10px] text-muted-foreground">{postos.find(p => p.id === postoSelecionadoId)?.codigo} · Disponível</p>
+                          <span className="mt-2 inline-block text-[10px] font-bold text-primary">Iniciar</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             )}
-
-            <button
-              onClick={handleIniciar}
-              disabled={!ordemSelecionadaId || !operacaoSelecionadaId}
-              className="w-full h-12 flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold uppercase tracking-widest text-xs rounded-xl shadow-md hover:opacity-90 transition-all disabled:opacity-50"
-            >
-              <Play className="h-4 w-4" /> Iniciar
-            </button>
 
             {/* Lista de sessões ativas, uma por operação/máquina */}
             {sessoes.length > 0 && (

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Users, UserPlus, X, Loader2, Check, AlertCircle, Mail, ChevronDown, ChevronUp } from 'lucide-react'
+import { Users, UserPlus, X, Loader2, Check, AlertCircle, Mail, ChevronDown, ChevronUp, MapPin, Plus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import { ROLE_LABELS, type RoleName } from '@/lib/permissions'
@@ -17,7 +17,11 @@ interface Membro {
   status: string
   first_access_completed: boolean
   roles: { role_name: RoleName; role_display_name: string }[]
+  postos: string[]
 }
+
+interface PostoTrabalho { id: string; codigo: string; nome: string; status: string }
+interface EquipeCadastro { id: string; nome: string; descricao?: string; membros: string[]; postos: string[] }
 
 interface RoleDisponivel {
   id: string
@@ -35,6 +39,9 @@ export function EquipeTab() {
 
   const [membros, setMembros]               = useState<Membro[]>([])
   const [rolesDisponiveis, setRolesDisponiveis] = useState<RoleDisponivel[]>([])
+  const [postos, setPostos] = useState<PostoTrabalho[]>([])
+  const [equipes, setEquipes] = useState<EquipeCadastro[]>([])
+  const [novaEquipe, setNovaEquipe] = useState('')
   const [carregando, setCarregando]         = useState(true)
   const [expandido, setExpandido]           = useState<string | null>(null)
 
@@ -56,12 +63,25 @@ export function EquipeTab() {
     if (!empresaId) return
     setCarregando(true)
 
-    // Membros da empresa com seus roles
-    const { data: perfis } = await supabase
+    // Membros, roles e postos são carregados em lote para evitar N+1.
+    const [{ data: perfis }, { data: postosData }, { data: vinculos }, { data: equipesData }, { data: equipeMembros }, { data: equipePostos }] = await Promise.all([
+      supabase
       .from('perfis')
       .select('id, user_id, email, nome, status, first_access_completed')
       .eq('empresa_id', empresaId)
-      .order('nome')
+      .order('nome'),
+      supabase.from('maquinas').select('id, codigo, nome, status').eq('empresa_id', empresaId).eq('status', 'ativa').order('nome'),
+      supabase.from('usuario_postos_trabalho').select('user_id, maquina_id').eq('empresa_id', empresaId),
+      supabase.from('equipes').select('id, nome, descricao').eq('empresa_id', empresaId).eq('ativo', true).order('nome'),
+      supabase.from('equipe_membros').select('equipe_id, user_id').eq('empresa_id', empresaId),
+      supabase.from('equipe_postos_trabalho').select('equipe_id, maquina_id').eq('empresa_id', empresaId),
+    ])
+    setPostos((postosData ?? []) as PostoTrabalho[])
+    setEquipes((equipesData ?? []).map((equipe: any) => ({
+      ...equipe,
+      membros: (equipeMembros ?? []).filter((v: any) => v.equipe_id === equipe.id).map((v: any) => v.user_id),
+      postos: (equipePostos ?? []).filter((v: any) => v.equipe_id === equipe.id).map((v: any) => v.maquina_id),
+    })))
 
     if (perfis) {
       // Busca roles de todos os membros de uma vez
@@ -78,9 +98,15 @@ export function EquipeTab() {
         rolesPorUser[r.user_id].push(r)
       }
 
+      const postosPorUser: Record<string, string[]> = {}
+      for (const vinculo of vinculos ?? []) {
+        if (!postosPorUser[vinculo.user_id]) postosPorUser[vinculo.user_id] = []
+        postosPorUser[vinculo.user_id].push(vinculo.maquina_id)
+      }
       setMembros(perfis.map((p: any) => ({
         ...p,
         roles: rolesPorUser[p.user_id] ?? [],
+        postos: postosPorUser[p.user_id] ?? [],
       })))
     }
 
@@ -178,6 +204,43 @@ export function EquipeTab() {
     )
   }
 
+  const togglePosto = async (membro: Membro, maquinaId: string) => {
+    if (!empresaId) return
+    const vinculado = membro.postos.includes(maquinaId)
+    const query = vinculado
+      ? supabase.from('usuario_postos_trabalho').delete().eq('empresa_id', empresaId).eq('user_id', membro.user_id).eq('maquina_id', maquinaId)
+      : supabase.from('usuario_postos_trabalho').insert({ empresa_id: empresaId, user_id: membro.user_id, maquina_id: maquinaId })
+    const { error } = await query
+    if (error) return
+    carregar()
+  }
+
+  const criarEquipe = async () => {
+    if (!empresaId || !novaEquipe.trim()) return
+    const { error } = await supabase.from('equipes').insert({ empresa_id: empresaId, nome: novaEquipe.trim() })
+    if (!error) { setNovaEquipe(''); carregar() }
+  }
+
+  const toggleMembroEquipe = async (equipe: EquipeCadastro, userId: string) => {
+    if (!empresaId) return
+    const ativo = equipe.membros.includes(userId)
+    const query = ativo
+      ? supabase.from('equipe_membros').delete().eq('empresa_id', empresaId).eq('equipe_id', equipe.id).eq('user_id', userId)
+      : supabase.from('equipe_membros').insert({ empresa_id: empresaId, equipe_id: equipe.id, user_id: userId })
+    const { error } = await query
+    if (!error) carregar()
+  }
+
+  const togglePostoEquipe = async (equipe: EquipeCadastro, maquinaId: string) => {
+    if (!empresaId) return
+    const ativo = equipe.postos.includes(maquinaId)
+    const query = ativo
+      ? supabase.from('equipe_postos_trabalho').delete().eq('empresa_id', empresaId).eq('equipe_id', equipe.id).eq('maquina_id', maquinaId)
+      : supabase.from('equipe_postos_trabalho').insert({ empresa_id: empresaId, equipe_id: equipe.id, maquina_id: maquinaId })
+    const { error } = await query
+    if (!error) carregar()
+  }
+
   // ------------------------------------------------------------
   // Render
   // ------------------------------------------------------------
@@ -210,6 +273,51 @@ export function EquipeTab() {
           <UserPlus className="h-3.5 w-3.5" />
           Convidar
         </button>
+      </div>
+
+      <div className="bg-card border border-border rounded-2xl p-5 space-y-4 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-foreground">Equipes e postos herdados</h3>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Membros herdam automaticamente os postos liberados para a equipe.</p>
+          </div>
+          <div className="flex gap-2">
+            <input value={novaEquipe} onChange={e => setNovaEquipe(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') criarEquipe() }} placeholder="Nome da equipe" className="h-9 min-w-0 px-3 rounded-xl border border-border bg-input text-xs" />
+            <button type="button" onClick={criarEquipe} disabled={!novaEquipe.trim()} className="h-9 px-3 rounded-xl bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50 flex items-center gap-1"><Plus className="h-3.5 w-3.5" /> Criar</button>
+          </div>
+        </div>
+        {equipes.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-3">Nenhuma equipe cadastrada.</p>
+        ) : (
+          <div className="space-y-3">
+            {equipes.map(equipe => (
+              <div key={equipe.id} className="rounded-xl border border-border p-4 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold text-foreground">{equipe.nome}</p>
+                  <span className="text-[10px] text-muted-foreground">{equipe.membros.length} membro(s) · {equipe.postos.length} posto(s)</span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Membros</p>
+                  <div className="flex flex-wrap gap-2">
+                    {membros.map(membro => {
+                      const ativo = equipe.membros.includes(membro.user_id)
+                      return <button key={membro.user_id} type="button" onClick={() => toggleMembroEquipe(equipe, membro.user_id)} className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all ${ativo ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border text-muted-foreground'}`}>{membro.nome || membro.email}</button>
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Postos liberados</p>
+                  <div className="flex flex-wrap gap-2">
+                    {postos.map(posto => {
+                      const ativo = equipe.postos.includes(posto.id)
+                      return <button key={posto.id} type="button" onClick={() => togglePostoEquipe(equipe, posto.id)} className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all ${ativo ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border text-muted-foreground'}`}>{posto.codigo} — {posto.nome}</button>
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Formulário de convite */}
@@ -420,6 +528,29 @@ export function EquipeTab() {
                           </button>
                         )
                       })}
+                    </div>
+                    <div className="pt-2">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1 mb-2">
+                        <MapPin className="h-3 w-3" /> Postos de trabalho liberados
+                      </p>
+                      {postos.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Cadastre postos na aba Máquinas para liberá-los aos usuários.</p>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {postos.map(posto => {
+                            const ativo = membro.postos.includes(posto.id)
+                            return (
+                              <button key={posto.id} type="button" onClick={() => togglePosto(membro, posto.id)} className={[
+                                'flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left transition-all',
+                                ativo ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border bg-muted/20 text-muted-foreground hover:border-border/80 hover:text-foreground',
+                              ].join(' ')}>
+                                <div className={`h-3.5 w-3.5 rounded-full border flex-shrink-0 ${ativo ? 'bg-primary border-primary' : 'border-muted-foreground/30'}`} />
+                                <span className="text-[11px] font-semibold leading-tight truncate">{posto.codigo} — {posto.nome}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
