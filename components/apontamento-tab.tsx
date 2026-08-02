@@ -180,25 +180,34 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
   isUltimaEtapa?: boolean
   maxProduzidas?: number
 }) {
-  const [produzidas, setProduzidas] = useState(maxProduzidas === 0 ? "0" : "")
+  const [boas, setBoas] = useState(maxProduzidas === 0 ? "0" : "")
   const [refugo, setRefugo] = useState("")
   const [retrabalho, setRetrabalho] = useState("")
-  const [encerramento, setEncerramento] = useState<"continuar" | "encerrar" | "encerrar_parcial">("continuar")
 
-  const quantidadeProduzida = parseInt(produzidas) || 0
+  const quantidadeBoas = parseInt(boas) || 0
   const quantidadeRefugo = parseInt(refugo) || 0
-  const excedePlanejado = maxProduzidas !== undefined && quantidadeProduzida > maxProduzidas
-  const refugoInvalido = quantidadeRefugo > quantidadeProduzida
-  const podeConfirmarQuantidade = quantidadeProduzida > 0 || maxProduzidas === 0
+  const quantidadeRetrabalho = parseInt(retrabalho) || 0
+  const quantidadeProcessada = quantidadeBoas + quantidadeRefugo
+  const excedePlanejado = maxProduzidas !== undefined && quantidadeProcessada > maxProduzidas
+  const quantidadeInvalida = quantidadeBoas < 0 || quantidadeRefugo < 0 || quantidadeRetrabalho < 0
+  const retrabalhoInvalido = quantidadeRetrabalho > quantidadeProcessada
+  const podeConfirmarQuantidade = (quantidadeProcessada > 0 || maxProduzidas === 0)
+    && !quantidadeInvalida
+    && !retrabalhoInvalido
+  const atingiuQuantidadePlanejada = maxProduzidas !== undefined && quantidadeProcessada === maxProduzidas
+  const quantidadeRestante = maxProduzidas === undefined
+    ? undefined
+    : Math.max(0, maxProduzidas - quantidadeProcessada)
 
   const handleConfirm = () => {
-    if (!podeConfirmarQuantidade || excedePlanejado || refugoInvalido) return
-    const atingiuQuantidadePlanejada = isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas
+    if (!podeConfirmarQuantidade || excedePlanejado) return
     onConfirm({
-      produzidas: quantidadeProduzida,
+      // No banco, pecas_produzidas representa o total processado. A interface
+      // separa as peças boas para evitar que o refugo fique fora do limite da OP.
+      produzidas: quantidadeProcessada,
       refugo: quantidadeRefugo,
-      retrabalho: parseInt(retrabalho) || 0,
-      encerramento: atingiuQuantidadePlanejada ? "encerrar" : encerramento,
+      retrabalho: quantidadeRetrabalho,
+      encerramento: atingiuQuantidadePlanejada ? "encerrar" : "continuar",
     })
   }
 
@@ -214,24 +223,12 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
 
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Peças Produzidas *</label>
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Peças boas *</label>
             <input
-              type="number" min={maxProduzidas === 0 ? 0 : 1} max={maxProduzidas} placeholder="Ex: 120"
-              value={produzidas} onChange={e => setProduzidas(e.target.value)}
+              type="number" min="0" max={maxProduzidas} placeholder="Ex: 78"
+              value={boas} onChange={e => setBoas(e.target.value)}
               className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
             />
-            {maxProduzidas !== undefined && (
-              <p className={`text-[10px] ${excedePlanejado ? "font-bold text-destructive" : "text-muted-foreground"}`}>
-                {excedePlanejado
-                  ? `O máximo permitido neste apontamento é ${maxProduzidas} peça${maxProduzidas === 1 ? "" : "s"}.`
-                  : `Quantidade restante nesta operação: ${maxProduzidas} peça${maxProduzidas === 1 ? "" : "s"}.`}
-              </p>
-            )}
-            {isUltimaEtapa && maxProduzidas !== undefined && quantidadeProduzida === maxProduzidas && maxProduzidas > 0 && (
-              <p className="text-[10px] font-bold text-emerald-600">
-                Esta quantidade completa o planejado e encerrará a OP automaticamente.
-              </p>
-            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
@@ -241,7 +238,6 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
                 value={refugo} onChange={e => setRefugo(e.target.value)}
                 className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
               />
-              {refugoInvalido && <p className="text-[10px] font-bold text-destructive">Não pode superar a produção.</p>}
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Retrabalho</label>
@@ -250,36 +246,27 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
                 value={retrabalho} onChange={e => setRetrabalho(e.target.value)}
                 className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
               />
+              {retrabalhoInvalido && <p className="text-[10px] font-bold text-destructive">Não pode superar o total apontado.</p>}
             </div>
           </div>
 
-          <div className="space-y-1.5 pt-1">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Status desta Operação</label>
-            <div className="space-y-2">
-              {[
-                { value: "continuar", label: "Salvar e Continuar Apontamento", desc: "Salva o tempo e peças produzidas, mantendo a operação aberta" },
-                {
-                  value: "encerrar",
-                  label: isUltimaEtapa ? "Concluir Operação e Encerrar OP" : "Concluir esta Operação",
-                  desc: isUltimaEtapa ? "Finaliza a última etapa do roteiro e encerra a OP no sistema" : "Finaliza esta etapa e libera a próxima operação do roteiro",
-                },
-                { value: "encerrar_parcial", label: "Concluir Operação Parcialmente", desc: "Encerra esta etapa com quantidade parcial sem encerrar a OP" },
-              ].map(op => (
-                <button
-                  key={op.value}
-                  onClick={() => setEncerramento(op.value as any)}
-                  className={`w-full flex items-start gap-3 px-4 py-3 rounded-xl border text-left transition-all
-                    ${encerramento === op.value ? "border-primary bg-primary/5" : "border-border hover:bg-muted/50"}`}
-                >
-                  <div className={`h-4 w-4 rounded-full border-2 flex-shrink-0 mt-0.5 transition-all
-                    ${encerramento === op.value ? "border-primary bg-primary" : "border-muted-foreground/30"}`} />
-                  <div>
-                    <p className={`text-sm font-bold ${encerramento === op.value ? "text-primary" : "text-foreground"}`}>{op.label}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{op.desc}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
+          <div className={`rounded-xl border p-3 text-xs font-medium ${excedePlanejado || quantidadeInvalida
+            ? "border-destructive/20 bg-destructive/5 text-destructive"
+            : atingiuQuantidadePlanejada
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700"
+              : "border-primary/20 bg-primary/5 text-foreground"
+          }`}>
+            {excedePlanejado
+              ? `Boas + refugos não podem superar as ${maxProduzidas} peças restantes.`
+              : quantidadeInvalida
+                ? "As quantidades não podem ser negativas."
+                : atingiuQuantidadePlanejada
+                  ? isUltimaEtapa
+                    ? `Total apontado: ${quantidadeProcessada}. A OP será encerrada automaticamente.`
+                    : `Total apontado: ${quantidadeProcessada}. A operação será concluída automaticamente.`
+                  : maxProduzidas !== undefined
+                    ? `Total apontado: ${quantidadeProcessada}. Restarão ${quantidadeRestante} peças nesta operação.`
+                    : `Total apontado: ${quantidadeProcessada} peças (boas + refugos).`}
           </div>
         </div>
 
@@ -289,7 +276,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!podeConfirmarQuantidade || excedePlanejado || refugoInvalido || loading}
+            disabled={!podeConfirmarQuantidade || excedePlanejado || loading}
             className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading && <span className="h-3.5 w-3.5 border-2 border-primary-foreground/40 border-t-primary-foreground rounded-full animate-spin" />}
