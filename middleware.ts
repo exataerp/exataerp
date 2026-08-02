@@ -5,8 +5,6 @@ const PUBLIC_ROUTES = [
   '/login',
   '/primeiro-acesso',
   '/recuperar-senha',
-  // Provisionamento único protegido por chave criptográfica. Removido após o uso.
-  '/api/admin/provisionar-producao',
 ]
 
 const ROTAS_RESTRITAS: Record<string, string[]> = {
