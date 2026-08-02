@@ -61,7 +61,6 @@ export const ABA_ROLES: Record<AbaId, RoleName[]> = {
   gbo: [
     ROLES.SYSTEM_MANAGER,
     ROLES.PRODUCTION_MANAGER,
-    ROLES.PRODUCTION_USER,
   ],
   pcp: [
     ROLES.SYSTEM_MANAGER,
@@ -100,6 +99,7 @@ export const ABA_ROLES: Record<AbaId, RoleName[]> = {
   ],
   configuracoes: [
     ROLES.SYSTEM_MANAGER,
+    ROLES.PRODUCTION_USER,
   ],
   equipe: [
     ROLES.SYSTEM_MANAGER,
@@ -145,7 +145,7 @@ export function isSystemManager(userRoles: RoleName[]): boolean {
 export const ROLE_LABELS: Record<RoleName, { display: string; description: string }> = {
   system_manager:      { display: 'Administrador do Sistema', description: 'Acesso total ao sistema' },
   production_manager:  { display: 'Gestor de Produção',      description: 'Gerencia produção, PCP e relatórios' },
-  production_user:     { display: 'Usuário de Produção',     description: 'Apontamento e visualização do PCP' },
+  production_user:     { display: 'Usuário de Produção',     description: 'Dashboard, apontamentos e configurações' },
   maintenance_manager: { display: 'Gestor de Manutenção',    description: 'Gestão completa de manutenção' },
   maintenance_user:    { display: 'Usuário de Manutenção',   description: 'Registro de ordens de serviço' },
   stock_manager:       { display: 'Gestor de Estoque',        description: 'Gestão completa de estoque e lista de materiais' },

@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from "react"
 import { useTheme } from "next-themes"
 import { supabase } from "@/components/supabase"
 import { useAuth } from "@/contexts/AuthContext"
+import type { AbaId } from "@/lib/permissions"
 import { useToast } from "@/hooks/use-toast"
 import { GBOTab } from "@/components/gbo-tab"
 import { PCPTab } from "@/components/pcp-tab"
@@ -24,7 +25,7 @@ import {
   Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
 } from "lucide-react"
 
-type TabId = "dashboard" | "gbo" | "pcp" | "apontamento" | "maquinas" | "manutencao" | "excecoes" | "estoque" | "relatorios" | "configuracoes" | "equipe"
+type TabId = AbaId
 
 const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.ElementType }[] = [
   { id: "dashboard",  label: "Dashboard",       sublabel: "Visão em tempo real",     icon: LayoutDashboard },
@@ -41,10 +42,10 @@ const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.Eleme
 const STORAGE_TAB = "exata_aba_ativa"
 
 export default function ExataApp() {
-  const { session, loading: authLoading, signOut, canAccess, isSystemManager } = useAuth()
+  const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
-  const visibleNavItems = NAV_ITEMS.filter(item => canAccess(item.id as any))
+  const visibleNavItems = NAV_ITEMS.filter(item => canAccess(item.id))
 
   // código de acesso (card de configurações)
   const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
@@ -84,6 +85,7 @@ export default function ExataApp() {
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [showAlertas,  setShowAlertas]  = useState(false)
   const [alertas,      setAlertas]      = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
+  const canAccessActiveTab = visibleTabs.includes(activeTab)
   const { theme, setTheme } = useTheme()
   const { toast } = useToast()
   const faixaTelaRef = useRef<"celular" | "notebook" | "monitor" | null>(null)
@@ -130,6 +132,21 @@ export default function ExataApp() {
       window.location.replace("/login")
     }
   }, [authLoading, session])
+
+  // Impede que uma aba antiga salva no navegador continue aberta depois de
+  // uma mudança de perfil/permissão.
+  useEffect(() => {
+    if (authLoading || !session || canAccessActiveTab) return
+
+    const fallback = visibleTabs.includes("dashboard")
+      ? "dashboard"
+      : visibleTabs[0]
+
+    if (fallback) {
+      setActiveTab(fallback)
+      localStorage.setItem(STORAGE_TAB, fallback)
+    }
+  }, [authLoading, session, canAccessActiveTab, visibleTabs])
 
   // Carrega dados quando empresa estiver disponível
   useEffect(() => {
@@ -530,6 +547,8 @@ export default function ExataApp() {
   )
 
   const goTab = (tab: TabId) => {
+    if (!visibleTabs.includes(tab)) return
+
     setActiveTab(tab)
     localStorage.setItem(STORAGE_TAB, tab)
     setMobileOpen(false)
@@ -670,15 +689,17 @@ export default function ExataApp() {
                 onClick={() => goTab("equipe")}
               />
             )}
-            <NavButton
-              id="configuracoes"
-              label="Configurações"
-              sublabel="Preferências do sistema"
-              icon={Settings}
-              isActive={activeTab === "configuracoes"}
-              isCollapsed={collapsed}
-              onClick={() => goTab("configuracoes")}
-            />
+            {canAccess("configuracoes") && (
+              <NavButton
+                id="configuracoes"
+                label="Configurações"
+                sublabel="Preferências do sistema"
+                icon={Settings}
+                isActive={activeTab === "configuracoes"}
+                isCollapsed={collapsed}
+                onClick={() => goTab("configuracoes")}
+              />
+            )}
             <button
               onClick={handleSair}
               disabled={isSigningOut}
@@ -784,19 +805,21 @@ export default function ExataApp() {
                 </div>
               </button>
             )}
-            <button
-              onClick={() => goTab("configuracoes")}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
-                ${activeTab === "configuracoes" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-            >
-              <Settings className="h-5 w-5 flex-shrink-0" />
-              <div className="flex flex-col min-w-0">
-                <span className="text-sm font-bold leading-tight">Configurações</span>
-                <span className={`text-[10px] leading-tight truncate ${activeTab === "configuracoes" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
-                  Preferências do sistema
-                </span>
-              </div>
-            </button>
+            {canAccess("configuracoes") && (
+              <button
+                onClick={() => goTab("configuracoes")}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all
+                  ${activeTab === "configuracoes" ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+              >
+                <Settings className="h-5 w-5 flex-shrink-0" />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-bold leading-tight">Configurações</span>
+                  <span className={`text-[10px] leading-tight truncate ${activeTab === "configuracoes" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                    Preferências do sistema
+                  </span>
+                </div>
+              </button>
+            )}
             <button
               onClick={handleSair}
               disabled={isSigningOut}
@@ -819,72 +842,72 @@ export default function ExataApp() {
 
           <main className="flex-1 overflow-auto px-4 lg:px-8 py-6 print:p-12">
 
-            {empresaAtivaId && activeTab !== "configuracoes" && (
+            {canAccessActiveTab && empresaAtivaId && activeTab !== "configuracoes" && (
               <OnboardingChecklist
                 empresaAtivaId={empresaAtivaId}
                 onGoToTab={(tab) => goTab(tab as any)}
               />
             )}
 
-            {activeTab === "dashboard" && (
+            {canAccessActiveTab && activeTab === "dashboard" && (
               <div className="animate-in fade-in duration-300">
                 <DashboardTab empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "gbo" && (
+            {canAccessActiveTab && activeTab === "gbo" && (
               <div className="animate-in fade-in duration-300">
                 <GBOTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "pcp" && (
+            {canAccessActiveTab && activeTab === "pcp" && (
               <div className="animate-in fade-in duration-300">
                 <PCPTab empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "maquinas" && (
+            {canAccessActiveTab && activeTab === "maquinas" && (
               <div className="animate-in fade-in duration-300">
                 <MaquinasTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "manutencao" && (
+            {canAccessActiveTab && activeTab === "manutencao" && (
               <div className="animate-in fade-in duration-300">
                 <ManutencaoTab user={{ id: empresaAtivaId ?? "" }} empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "apontamento" && (
+            {canAccessActiveTab && activeTab === "apontamento" && (
               <div className="animate-in fade-in duration-300">
                 <ApontamentoTab empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-            {activeTab === "estoque" && (
+            {canAccessActiveTab && activeTab === "estoque" && (
               <div className="animate-in fade-in duration-300">
                 <EstoqueTab empresaAtivaId={empresaAtivaId} abaSelecionada={estoqueAbaAtiva} onChangeAba={setEstoqueAbaAtiva} />
               </div>
             )}
 
-            {activeTab === "relatorios" && (
+            {canAccessActiveTab && activeTab === "relatorios" && (
               <div className="animate-in fade-in duration-300">
                 <RelatoriosTab empresaAtivaId={empresaAtivaId} relatorioSelecionado={relatorioAtivo} onChangeRelatorio={setRelatorioAtivo} />
               </div>
             )}
 
-            {activeTab === "excecoes" && (
+            {canAccessActiveTab && activeTab === "excecoes" && (
               <div className="animate-in fade-in duration-300">
                 <ExcecoesTab empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 
-{activeTab === "equipe" && (
+            {canAccessActiveTab && activeTab === "equipe" && (
               <EquipeTab />
             )}
 
-            {activeTab === "configuracoes" && (
+            {canAccessActiveTab && activeTab === "configuracoes" && (
               <div className="space-y-6 pb-12 animate-in fade-in duration-300">
                 <div>
                   <h2 className="text-lg font-bold text-foreground">Configurações</h2>

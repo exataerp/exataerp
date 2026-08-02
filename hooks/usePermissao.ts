@@ -42,7 +42,7 @@ export function usePermissao() {
     podeGerirAtivos:   hasRole(ROLES.MAINTENANCE_MANAGER) || isSystemManager,
     podeGerirQuality:  hasRole(ROLES.QUALITY_MANAGER) || isSystemManager,
     podeVerRelatorios: hasRole(ROLES.PRODUCTION_MANAGER) || hasRole(ROLES.STOCK_MANAGER) || hasRole(ROLES.QUALITY_MANAGER) || isSystemManager,
-    podeConfigurar:    isSystemManager,
+    podeConfigurar:    canAccess('configuracoes'),
     podeGerirUsuarios: isSystemManager,
   }
 }

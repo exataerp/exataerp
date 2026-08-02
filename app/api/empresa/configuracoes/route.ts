@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 
 import {
-  assertSystemManager,
   AuthError,
+  getUserRoles,
   getUserFromToken,
   supabaseAdmin,
 } from "@/lib/supabase/admin"
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic"
 const CAMPOS_CONFIGURACAO =
   "nome, cnpj, endereco, segmento, num_funcionarios, meta_oee, meta_refugo, meta_produtividade, tempo_padrao, unidade_tempo"
 
-async function obterEmpresaDoGestor(request: Request) {
+async function obterEmpresaAutorizada(request: Request) {
   const user = await getUserFromToken(request)
   const { data: perfil, error } = await supabaseAdmin
     .from("perfis")
@@ -24,7 +24,15 @@ async function obterEmpresaDoGestor(request: Request) {
     throw new AuthError("Empresa não encontrada.", 404)
   }
 
-  await assertSystemManager(user.id, perfil.empresa_id)
+  const roles = await getUserRoles(user.id, perfil.empresa_id)
+  const podeConfigurar = roles.some((role) =>
+    ["system_manager", "production_user"].includes(role),
+  )
+
+  if (!podeConfigurar) {
+    throw new AuthError("Acesso negado às configurações.", 403)
+  }
+
   return perfil.empresa_id
 }
 
@@ -46,7 +54,7 @@ function responderErro(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const empresaId = await obterEmpresaDoGestor(request)
+    const empresaId = await obterEmpresaAutorizada(request)
     const { data, error } = await supabaseAdmin
       .from("empresas")
       .select(CAMPOS_CONFIGURACAO)
@@ -65,7 +73,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const empresaId = await obterEmpresaDoGestor(request)
+    const empresaId = await obterEmpresaAutorizada(request)
     const body = await request.json()
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return NextResponse.json(
