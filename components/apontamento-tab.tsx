@@ -347,7 +347,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [opsRes, apRes, gRes, sRes, postosRes] = await Promise.all([
+      const [opsRes, apRes, gRes, postosRes] = await Promise.all([
         supabase.from("ordens_producao")
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!)
@@ -361,13 +361,17 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           .eq("empresa_id", empresaAtivaId!)
           .eq("nome", "Paradas de Máquina")
           .order("nome"),
-        supabase.from("excecao_subgrupos")
-          .select("id, grupo_id, nome, excecao_grupos!inner(nome)")
-          .eq("empresa_id", empresaAtivaId!)
-          .eq("excecao_grupos.nome", "Paradas de Máquina")
-          .order("nome"),
         supabase.rpc("meus_postos_trabalho"),
       ])
+
+      const grupoParadasId = gRes.data?.[0]?.id
+      const sRes = grupoParadasId
+        ? await supabase.from("excecao_subgrupos")
+            .select("id, grupo_id, nome")
+            .eq("empresa_id", empresaAtivaId!)
+            .eq("grupo_id", grupoParadasId)
+            .order("nome")
+        : { data: [], error: null }
 
       const codigosProdutos = Array.from(new Set(
         (opsRes.data || []).map((ordem: any) => ordem.produto_codigo).filter(Boolean)
@@ -393,6 +397,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       if (prodRes.error) {
         console.error("Erro buscar produtos das OPs:", prodRes.error)
         toast({ title: "Falha ao buscar produtos", description: prodRes.error.message, variant: "destructive" })
+      }
+
+      if (gRes.error || sRes.error) {
+        const erroParadas = gRes.error || sRes.error
+        console.error("Erro buscar paradas de máquina:", erroParadas)
+        toast({ title: "Falha ao carregar paradas de máquina", description: erroParadas?.message, variant: "destructive" })
       }
 
       setOrdens((opsRes.data || []) as OrdemProducao[])
