@@ -61,12 +61,37 @@ interface SessaoAtiva {
   maquinaNome: string
   inicioTimestamp: number
   segundosAcumulados: number
+  // Preserva a precisao entre pausas. O campo em segundos permanece para
+  // restaurar sessoes salvas por versoes anteriores da aplicacao.
+  milissegundosAcumulados?: number
   pausaInicioTimestamp?: number
   pausaId?: string
   cicloPlanejadoSeg?: number
 }
 
 const SESSAO_KEY = "exata_apontamento_sessao_"
+const MILISSEGUNDOS_POR_SEGUNDO = 1000
+
+function obterMilissegundosAcumulados(sessao: SessaoAtiva): number {
+  const milissegundos = sessao.milissegundosAcumulados
+  if (typeof milissegundos === "number" && Number.isFinite(milissegundos) && milissegundos >= 0) {
+    return milissegundos
+  }
+
+  // Compatibilidade com sessoes que ja estavam armazenadas no navegador.
+  return Math.max(0, Number(sessao.segundosAcumulados) || 0) * MILISSEGUNDOS_POR_SEGUNDO
+}
+
+function calcularMilissegundosDecorridos(sessao: SessaoAtiva, agora = Date.now()): number {
+  const acumulados = obterMilissegundosAcumulados(sessao)
+  if (sessao.pausaInicioTimestamp != null) return acumulados
+
+  return acumulados + Math.max(0, agora - sessao.inicioTimestamp)
+}
+
+function calcularSegundosDecorridos(sessao: SessaoAtiva, agora = Date.now()): number {
+  return Math.floor(calcularMilissegundosDecorridos(sessao, agora) / MILISSEGUNDOS_POR_SEGUNDO)
+}
 
 function renderModalPortal(children: React.ReactNode) {
   if (typeof document === "undefined") return null
@@ -453,15 +478,32 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       const agora = Date.now()
       const novo: Record<string, number> = {}
       for (const s of sessoes) {
-        novo[s.apontamentoId] = s.pausaInicioTimestamp
-          ? s.segundosAcumulados
-          : s.segundosAcumulados + Math.floor((agora - s.inicioTimestamp) / 1000)
+        novo[s.apontamentoId] = calcularSegundosDecorridos(s, agora)
       }
-      setSegundosMap(novo)
+      setSegundosMap(atual => {
+        const ids = Object.keys(novo)
+        const mudou = ids.length !== Object.keys(atual).length
+          || ids.some(id => atual[id] !== novo[id])
+        return mudou ? novo : atual
+      })
     }
+
+    const atualizarAoVoltarParaTela = () => {
+      if (document.visibilityState === "visible") tick()
+    }
+
     tick()
-    intervalRef.current = setInterval(tick, 1000)
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+    // O intervalo so redesenha a tela. O tempo vem dos timestamps absolutos,
+    // entao atrasos e throttling do navegador nao se acumulam no cronometro.
+    intervalRef.current = setInterval(tick, 100)
+    window.addEventListener("focus", tick)
+    document.addEventListener("visibilitychange", atualizarAoVoltarParaTela)
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      window.removeEventListener("focus", tick)
+      document.removeEventListener("visibilitychange", atualizarAoVoltarParaTela)
+    }
   }, [sessoes])
 
   const salvarSessoes = useCallback((s: SessaoAtiva[]) => {
@@ -617,6 +659,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     }
 
     // Busca tempo planejado e máquina da operação no banco
+    // O cronometro comeca no clique. A latencia das consultas abaixo nao pode
+    // virar um atraso permanente em relacao ao tempo real da operacao.
+    const inicioSolicitadoTimestamp = Date.now()
+
     const { data: opDb } = await supabase
       .from("operacoes")
       .select("tempo, unidade, maquina_id")
@@ -646,8 +692,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       operacaoNome: op.nome,
       maquinaId: maquinaIdDefinitiva ?? undefined,
       maquinaNome: postos.find(p => p.id === postoSelecionadoId)?.nome ?? "Posto de trabalho",
-      inicioTimestamp: Date.now(),
+      inicioTimestamp: inicioSolicitadoTimestamp,
       segundosAcumulados: 0,
+      milissegundosAcumulados: 0,
       cicloPlanejadoSeg,
     }
     setApontamentos((atuais) => [data as Apontamento, ...atuais])
@@ -678,8 +725,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setShowModalPausa(false)
 
     const agora = Date.now()
-    const decorrido = Math.floor((agora - sessao.inicioTimestamp) / 1000)
-    const totalAtual = sessao.segundosAcumulados + decorrido
+    const totalAtualMs = calcularMilissegundosDecorridos(sessao, agora)
+    const totalAtualSegundos = Math.floor(totalAtualMs / MILISSEGUNDOS_POR_SEGUNDO)
 
     const { data: pausa, error } = await supabase
       .from("apontamento_pausas")
@@ -687,7 +734,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         empresa_id: empresaAtivaId,
         apontamento_id: sessao.apontamentoId,
         subgrupo_id: subgrupoId,
-        inicio: new Date().toISOString(),
+        inicio: new Date(agora).toISOString(),
       })
       .select()
       .single()
@@ -696,7 +743,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
     const sessaoAtualizada: SessaoAtiva = {
       ...sessao,
-      segundosAcumulados: totalAtual,
+      segundosAcumulados: totalAtualSegundos,
+      milissegundosAcumulados: totalAtualMs,
       inicioTimestamp: agora,
       pausaInicioTimestamp: agora,
       pausaId: pausa.id,
@@ -727,14 +775,21 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     const sessao = sessoes.find(s => s.apontamentoId === apontamentoId)
     if (!sessao?.pausaId) return
 
-    await supabase
+    // A retomada tambem vale desde o clique, independentemente da rede.
+    const retomadaTimestamp = Date.now()
+    const { error } = await supabase
       .from("apontamento_pausas")
-      .update({ fim: new Date().toISOString() })
+      .update({ fim: new Date(retomadaTimestamp).toISOString() })
       .eq("id", sessao.pausaId)
+
+    if (error) {
+      toast({ title: "Erro ao retomar a produção", description: error.message, variant: "destructive" })
+      return
+    }
 
     const sessaoAtualizada: SessaoAtiva = {
       ...sessao,
-      inicioTimestamp: Date.now(),
+      inicioTimestamp: retomadaTimestamp,
       pausaInicioTimestamp: undefined,
       pausaId: undefined,
     }
@@ -834,10 +889,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setShowModalFinalizar(false)
 
     try {
-      const emPausaAtual = !!sessao.pausaInicioTimestamp
     const agora = Date.now()
-    const decorrido = emPausaAtual ? 0 : Math.floor((agora - sessao.inicioTimestamp) / 1000)
-    const totalSegundos = sessao.segundosAcumulados + decorrido
+    const totalSegundos = calcularSegundosDecorridos(sessao, agora)
 
     // Fecha pausa aberta se houver
     if (sessao.pausaId) {
