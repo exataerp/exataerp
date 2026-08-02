@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
@@ -67,6 +68,12 @@ interface SessaoAtiva {
 
 const SESSAO_KEY = "exata_apontamento_sessao_"
 
+function renderModalPortal(children: React.ReactNode) {
+  if (typeof document === "undefined") return null
+
+  return createPortal(children, document.body)
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatarTempo(segundos: number): string {
@@ -96,7 +103,7 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
   const [subgrupoId, setSubgrupoId] = useState("")
   const grupo = grupos.find(g => g.id === grupoId)
 
-  return (
+  return renderModalPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
         <div className="flex items-center justify-between">
@@ -162,7 +169,7 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   )
 }
 
@@ -197,7 +204,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
     })
   }
 
-  return (
+  return renderModalPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
         <div className="flex items-center justify-between">
@@ -292,7 +299,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   )
 }
 
@@ -1070,7 +1077,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
       {/* Modais */}
       {/* Modal sugestão de OS de manutenção */}
-      {showSugestaoManutencao && (
+      {showSugestaoManutencao && renderModalPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-sm bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
             <div className="flex items-start gap-3">
@@ -1099,7 +1106,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               </button>
             </div>
           </div>
-        </div>
+        </div>,
       )}
 
       {showModalPausa && (
@@ -1133,7 +1140,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       })()}
 
       {/* Modal aviso estoque insuficiente */}
-      {showAvisoEstoque && (
+      {showAvisoEstoque && renderModalPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
             <div className="flex items-start gap-3">
@@ -1194,7 +1201,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               </button>
             </div>
           </div>
-        </div>
+        </div>,
       )}
 
       {/* Experiência operacional: posto -> trabalho -> operação -> execução */}
