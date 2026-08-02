@@ -1,6 +1,8 @@
 -- Seed industrial completo e idempotente da empresa FORZA IMPLEMENTOS.
 -- Execute somente depois da migration estrutura_industrial_forza.
+-- Este arquivo é UTF-8. No Windows PowerShell, leia-o sempre com -Encoding utf8.
 
+set client_encoding = 'UTF8';
 set statement_timeout = '0';
 set lock_timeout = '10s';
 
