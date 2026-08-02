@@ -99,9 +99,15 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
   onConfirm: (subgrupoId: string) => void
   onCancel: () => void
 }) {
-  const [grupoId, setGrupoId] = useState("")
   const [subgrupoId, setSubgrupoId] = useState("")
-  const grupo = grupos.find(g => g.id === grupoId)
+  const grupoParadas = grupos.find(g =>
+    g.nome
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim() === "paradas de maquina"
+  )
+  const motivos = grupoParadas?.subgrupos ?? []
 
   return renderModalPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
@@ -115,34 +121,26 @@ function ModalPausa({ grupos, onConfirm, onCancel }: {
 
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Grupo</label>
-            <Select value={grupoId} onValueChange={(v) => { setGrupoId(v); setSubgrupoId("") }}>
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Parada de máquina</label>
+            <Select value={subgrupoId} onValueChange={setSubgrupoId}>
               <SelectTrigger className="w-full h-10 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all">
-                <SelectValue placeholder="Selecione o grupo" />
+                <SelectValue placeholder="Selecione a parada" />
               </SelectTrigger>
               <SelectContent className="bg-card border-border">
-                {grupos.map(g => <SelectItem key={g.id} value={g.id}>{g.nome}</SelectItem>)}
+                {motivos.map(motivo => <SelectItem key={motivo.id} value={motivo.id}>{motivo.nome}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
 
-          {grupo && (
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Motivo</label>
-              <Select value={subgrupoId} onValueChange={setSubgrupoId}>
-                <SelectTrigger className="w-full h-10 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all">
-                  <SelectValue placeholder="Selecione o motivo" />
-                </SelectTrigger>
-                <SelectContent className="bg-card border-border">
-                  {grupo.subgrupos.map(s => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
-                </SelectContent>
-              </Select>
+          {!grupoParadas && (
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs font-medium text-destructive">
+              A lista de paradas de máquina não está disponível.
             </div>
           )}
 
           {subgrupoId && (() => {
-            const sub = grupo?.subgrupos.find(s => s.id === subgrupoId)
-            const ehProgramada = isPausaProgramada(sub?.nome, grupo?.nome)
+            const sub = motivos.find(s => s.id === subgrupoId)
+            const ehProgramada = isPausaProgramada(sub?.nome, grupoParadas?.nome)
             return (
               <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${ehProgramada ? "bg-blue-500/10 border-blue-500/20 text-blue-600 font-medium" : "bg-amber-500/10 border-amber-500/20 text-amber-600 font-medium"}`}>
                 <Clock className="h-4 w-4 flex-shrink-0" />
@@ -358,8 +356,16 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           .select("id, ordem_id, operacao_id, operacao_nome, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, encerramento, created_at")
           .eq("empresa_id", empresaAtivaId!)
           .order("created_at", { ascending: false }),
-        supabase.from("excecao_grupos").select("id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
-        supabase.from("excecao_subgrupos").select("id, grupo_id, nome").eq("empresa_id", empresaAtivaId!).order("nome"),
+        supabase.from("excecao_grupos")
+          .select("id, nome")
+          .eq("empresa_id", empresaAtivaId!)
+          .eq("nome", "Paradas de Máquina")
+          .order("nome"),
+        supabase.from("excecao_subgrupos")
+          .select("id, grupo_id, nome, excecao_grupos!inner(nome)")
+          .eq("empresa_id", empresaAtivaId!)
+          .eq("excecao_grupos.nome", "Paradas de Máquina")
+          .order("nome"),
         supabase.rpc("meus_postos_trabalho"),
       ])
 
