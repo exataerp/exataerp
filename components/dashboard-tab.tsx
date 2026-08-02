@@ -40,6 +40,7 @@ interface Apontamento {
   pecas_refugo: number
   pecas_retrabalho: number
   status: string
+  estado_operacao?: string
   created_at: string
 }
 
@@ -62,6 +63,8 @@ interface Pausa {
   apontamento_id: string
   inicio: string
   fim?: string
+  is_scheduled?: boolean
+  exclude_from_machine_downtime?: boolean
   subgrupo?: { nome: string; grupo?: { nome: string } }
 }
 
@@ -124,7 +127,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .eq("empresa_id", empresaAtivaId)
           .order("data_programacao", { ascending: false }),
         supabase.from("apontamentos")
-          .select("id, ordem_id, operacao_id, operacao_nome, maquina_id, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, created_at")
+          .select("id, ordem_id, operacao_id, operacao_nome, maquina_id, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, estado_operacao, created_at")
           .eq("empresa_id", empresaAtivaId)
           .gte("created_at", inicioISO)
           .lte("created_at", fimISO),
@@ -135,18 +138,18 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .select("insumo_id, saldo_atual, insumos(codigo, descricao, estoque_minimo, unidade_medida)")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamento_pausas")
-          .select("apontamento_id, inicio, fim, excecao_subgrupos(nome, excecao_grupos(nome))")
+          .select("apontamento_id, inicio, fim, is_scheduled, exclude_from_machine_downtime, excecao_subgrupos(nome, excecao_grupos(nome))")
           .eq("empresa_id", empresaAtivaId)
           .gte("inicio", inicioISO),
         supabase.from("produtos")
           .select("codigo, descricao, operacoes(id, ordem)")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamentos")
-          .select("id, maquina_id, status, created_at")
+          .select("id, maquina_id, status, estado_operacao, created_at")
           .eq("empresa_id", empresaAtivaId)
           .eq("status", "em_andamento"),
         supabase.from("apontamento_pausas")
-          .select("apontamento_id, inicio, fim, excecao_subgrupos(nome, excecao_grupos(nome))")
+          .select("apontamento_id, inicio, fim, is_scheduled, exclude_from_machine_downtime, excecao_subgrupos(nome, excecao_grupos(nome))")
           .eq("empresa_id", empresaAtivaId)
           .is("fim", null),
         supabase.from("operacoes")
@@ -222,7 +225,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
     const totalTempoPausa = pausas.reduce((s, p) => {
       if (!p.fim) return s
-      if (isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome)) return s
+      if (p.exclude_from_machine_downtime || isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome, p.is_scheduled)) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
 
@@ -311,6 +314,14 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
         statusLabel = "Inativa"
         statusColor = "text-muted-foreground"
         statusBg = "bg-muted/20"
+      } else if (apAtivo?.estado_operacao === "aguardando_retomada") {
+        statusLabel = "Aguardando retomada"
+        statusColor = "text-blue-500"
+        statusBg = "bg-blue-500/10"
+      } else if (apAtivo?.estado_operacao === "pausada_intervalo_programado") {
+        statusLabel = "Intervalo programado"
+        statusColor = "text-amber-500"
+        statusBg = "bg-amber-500/10"
       } else if (apAtivo && pausaAberta) {
         statusLabel = "Em pausa"
         statusColor = "text-amber-500"
@@ -491,7 +502,8 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                 </div>
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full ${statusBg}`}>
                   {statusLabel === "Produzindo" && <StatusDot color="green" />}
-                  {statusLabel === "Em pausa" && <StatusDot color="amber" pulse={false} />}
+                  {(statusLabel === "Em pausa" || statusLabel === "Intervalo programado") && <StatusDot color="amber" pulse={false} />}
+                  {statusLabel === "Aguardando retomada" && <StatusDot color="blue" pulse={false} />}
                   {(statusLabel === "Parada" || statusLabel === "Sem atividade" || statusLabel === "Inativa") && (
                     <StatusDot color={statusLabel === "Sem atividade" ? "amber" : "muted"} pulse={false} />
                   )}

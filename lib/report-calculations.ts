@@ -375,13 +375,29 @@ export function calcularResumoCiclo(produtos: CycleProductDatum[]) {
 }
 
 export interface TurnoProgramado {
+  id?: string
   hora_inicio: string
   hora_fim: string
   dias_semana?: string[]
   ativo?: boolean
+  pausar_ops_intervalos?: boolean
+  work_schedule_breaks?: IntervaloProgramado[]
 }
 
-function segundosEntreHorarios(inicio: string, fim: string): number {
+export interface IntervaloProgramado {
+  start_time: string
+  end_time: string
+  days_of_week?: string[]
+  is_active?: boolean
+}
+
+function minutosDoHorario(horario: string): number | null {
+  const [hora, minuto] = horario.split(":").map(Number)
+  if (![hora, minuto].every(Number.isFinite) || hora < 0 || hora > 23 || minuto < 0 || minuto > 59) return null
+  return hora * 60 + minuto
+}
+
+export function segundosEntreHorarios(inicio: string, fim: string): number {
   const [horaInicio, minutoInicio] = inicio.split(":").map(Number)
   const [horaFim, minutoFim] = fim.split(":").map(Number)
   if (![horaInicio, minutoInicio, horaFim, minutoFim].every(Number.isFinite)) return 0
@@ -392,17 +408,74 @@ function segundosEntreHorarios(inicio: string, fim: string): number {
   return (fimMinutos - inicioMinutos) * 60
 }
 
+export function calcularSegundosDisponiveisTurno(turno: TurnoProgramado, diaSemana: string): number {
+  const inicioTurno = minutosDoHorario(turno.hora_inicio)
+  const fimTurnoBase = minutosDoHorario(turno.hora_fim)
+  if (inicioTurno == null || fimTurnoBase == null || inicioTurno === fimTurnoBase) return 0
+
+  const fimTurno = fimTurnoBase <= inicioTurno ? fimTurnoBase + 24 * 60 : fimTurnoBase
+  const intervalos = (turno.work_schedule_breaks || [])
+    .filter(intervalo =>
+      intervalo.is_active !== false
+      && Array.isArray(intervalo.days_of_week)
+      && intervalo.days_of_week.includes(diaSemana),
+    )
+    .map(intervalo => {
+      const inicioBase = minutosDoHorario(intervalo.start_time)
+      const fimBase = minutosDoHorario(intervalo.end_time)
+      if (inicioBase == null || fimBase == null || inicioBase === fimBase) return null
+
+      let inicio = inicioBase
+      if (fimTurno > 24 * 60 && inicio < inicioTurno) inicio += 24 * 60
+
+      let fim = fimBase
+      if (fim <= inicioBase) fim += 24 * 60
+      if (inicio >= 24 * 60 && fim < 24 * 60) fim += 24 * 60
+
+      const inicioLimitado = Math.max(inicioTurno, inicio)
+      const fimLimitado = Math.min(fimTurno, fim)
+      return fimLimitado > inicioLimitado ? [inicioLimitado, fimLimitado] as const : null
+    })
+    .filter((intervalo): intervalo is readonly [number, number] => intervalo !== null)
+    .sort((a, b) => a[0] - b[0])
+
+  // Une intervalos sobrepostos para não descontar o mesmo minuto duas vezes.
+  const unidos: [number, number][] = []
+  for (const [inicio, fim] of intervalos) {
+    const ultimo = unidos[unidos.length - 1]
+    if (!ultimo || inicio > ultimo[1]) unidos.push([inicio, fim])
+    else ultimo[1] = Math.max(ultimo[1], fim)
+  }
+
+  const minutosIntervalo = unidos.reduce((total, [inicio, fim]) => total + (fim - inicio), 0)
+  return Math.max(0, (fimTurno - inicioTurno - minutosIntervalo) * 60)
+}
+
+function dataNoFuso(iso: string, timezone: string): { ano: number; mes: number; dia: number } {
+  const formatador = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  })
+  const partes = Object.fromEntries(
+    formatador.formatToParts(new Date(iso)).map(parte => [parte.type, parte.value]),
+  )
+  return { ano: Number(partes.year), mes: Number(partes.month), dia: Number(partes.day) }
+}
+
 export function calcularTempoProgramado(
   inicioIso: string,
   fimIso: string,
   turnos: TurnoProgramado[],
   tempoPadrao?: number,
   unidadeTempoPadrao?: string,
+  timezone = "America/Sao_Paulo",
 ) {
-  const inicio = new Date(inicioIso)
-  const fim = new Date(fimIso)
-  inicio.setHours(0, 0, 0, 0)
-  fim.setHours(0, 0, 0, 0)
+  const inicioLocal = dataNoFuso(inicioIso, timezone)
+  const fimLocal = dataNoFuso(fimIso, timezone)
+  const inicio = new Date(Date.UTC(inicioLocal.ano, inicioLocal.mes - 1, inicioLocal.dia))
+  const fim = new Date(Date.UTC(fimLocal.ano, fimLocal.mes - 1, fimLocal.dia))
 
   const turnosValidos = turnos.filter(turno =>
     turno.ativo !== false &&
@@ -413,13 +486,13 @@ export function calcularTempoProgramado(
 
   let totalSegundos = 0
   let diasUteis = 0
-  for (const data = new Date(inicio); data <= fim; data.setDate(data.getDate() + 1)) {
-    const diaSemana = String(data.getDay())
+  for (const data = new Date(inicio); data <= fim; data.setUTCDate(data.getUTCDate() + 1)) {
+    const diaSemana = String(data.getUTCDay())
     if (diaSemana !== "0" && diaSemana !== "6") diasUteis += 1
 
     for (const turno of turnosValidos) {
       if (turno.dias_semana?.includes(diaSemana)) {
-        totalSegundos += segundosEntreHorarios(turno.hora_inicio, turno.hora_fim)
+        totalSegundos += calcularSegundosDisponiveisTurno(turno, diaSemana)
       }
     }
   }

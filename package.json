@@ -6,6 +6,7 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
+    "test:scheduled-breaks": "node --experimental-strip-types --test --test-isolation=none lib/scheduled-breaks.test.ts",
     "start": "next start"
   },
   "dependencies": {

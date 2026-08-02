@@ -22,7 +22,8 @@ import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users, ShieldCheck
+  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users, ShieldCheck,
+  Plus, Trash2, Pause
 } from "lucide-react"
 
 type TabId = AbaId
@@ -40,6 +41,41 @@ const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.Eleme
 ]
 
 const STORAGE_TAB = "exata_aba_ativa"
+
+interface IntervaloTurno {
+  id?: string
+  tenant_id?: string
+  schedule_id?: string
+  name: string
+  start_time: string
+  end_time: string
+  days_of_week: string[]
+  break_type: string
+  pause_operations_automatically: boolean
+  is_active: boolean
+  execution_order: number
+}
+
+interface TurnoConfigurado {
+  id?: string
+  nome: string
+  hora_inicio: string
+  hora_fim: string
+  dias_semana: string[]
+  ativo: boolean
+  pausar_ops_intervalos: boolean
+  work_schedule_breaks?: IntervaloTurno[]
+}
+
+const NOVO_INTERVALO_PADRAO: Omit<IntervaloTurno, "execution_order"> = {
+  name: "",
+  start_time: "",
+  end_time: "",
+  days_of_week: ["1", "2", "3", "4", "5"],
+  break_type: "interval",
+  pause_operations_automatically: true,
+  is_active: true,
+}
 
 export default function ExataApp() {
   const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager } = useAuth()
@@ -67,10 +103,12 @@ export default function ExataApp() {
   const [isSavingMetas,   setIsSavingMetas]   = useState(false)
 
   // turnos
-  const [turnos,          setTurnos]          = useState<{ id?: string; nome: string; hora_inicio: string; hora_fim: string; dias_semana: string[]; ativo: boolean }[]>([])
+  const [turnos,          setTurnos]          = useState<TurnoConfigurado[]>([])
   const [loadingTurnos,   setLoadingTurnos]   = useState(false)
   const [salvandoTurno,   setSalvandoTurno]   = useState(false)
   const [novoTurno,       setNovoTurno]       = useState({ nome: "", hora_inicio: "", hora_fim: "", dias_semana: ["1","2","3","4","5"] })
+  const [novosIntervalos, setNovosIntervalos] = useState<Record<string, Omit<IntervaloTurno, "execution_order">>>({})
+  const [salvandoIntervaloId, setSalvandoIntervaloId] = useState<string | null>(null)
 
   const [activeTab,    setActiveTab]    = useState<TabId>("dashboard")
   const [relatorioAtivo, setRelatorioAtivo] = useState<RelatoId>("oee")
@@ -457,12 +495,22 @@ export default function ExataApp() {
 
   const carregarTurnos = async (empId: string) => {
     setLoadingTurnos(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("turnos")
-      .select("*")
+      .select("id, nome, hora_inicio, hora_fim, dias_semana, ativo, pausar_ops_intervalos, work_schedule_breaks(id, tenant_id, schedule_id, name, start_time, end_time, days_of_week, break_type, pause_operations_automatically, is_active, execution_order)")
       .eq("empresa_id", empId)
       .order("hora_inicio")
-    if (data) setTurnos(data)
+    if (error) {
+      toast({ title: "Erro ao carregar turnos", description: error.message, variant: "destructive" })
+    } else if (data) {
+      setTurnos((data as TurnoConfigurado[]).map(turno => ({
+        ...turno,
+        pausar_ops_intervalos: turno.pausar_ops_intervalos !== false,
+        work_schedule_breaks: [...(turno.work_schedule_breaks || [])].sort((a, b) =>
+          a.execution_order - b.execution_order || a.start_time.localeCompare(b.start_time)
+        ),
+      })))
+    }
     setLoadingTurnos(false)
   }
 
@@ -478,13 +526,14 @@ export default function ExataApp() {
         hora_fim: novoTurno.hora_fim,
         dias_semana: novoTurno.dias_semana,
         ativo: true,
+        pausar_ops_intervalos: true,
       })
       .select()
       .single()
     if (error) {
       toast({ title: "Erro ao criar turno", description: error.message, variant: "destructive" })
     } else {
-      setTurnos(prev => [...prev, data])
+      setTurnos(prev => [...prev, { ...(data as TurnoConfigurado), work_schedule_breaks: [] }])
       setNovoTurno({ nome: "", hora_inicio: "", hora_fim: "", dias_semana: ["1","2","3","4","5"] })
       toast({ title: "✅ Turno criado" })
     }
@@ -515,6 +564,126 @@ export default function ExataApp() {
         <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground animate-pulse">Carregando Exata...</p>
       </div>
     )
+  }
+
+  const novoIntervaloDoTurno = (turnoId: string) =>
+    novosIntervalos[turnoId] || { ...NOVO_INTERVALO_PADRAO, days_of_week: [...NOVO_INTERVALO_PADRAO.days_of_week] }
+
+  const atualizarNovoIntervalo = (
+    turnoId: string,
+    patch: Partial<Omit<IntervaloTurno, "execution_order">>,
+  ) => {
+    setNovosIntervalos(prev => ({
+      ...prev,
+      [turnoId]: { ...novoIntervaloDoTurno(turnoId), ...patch },
+    }))
+  }
+
+  const toggleDiaIntervalo = (turnoId: string, dia: string) => {
+    const intervalo = novoIntervaloDoTurno(turnoId)
+    atualizarNovoIntervalo(turnoId, {
+      days_of_week: intervalo.days_of_week.includes(dia)
+        ? intervalo.days_of_week.filter(item => item !== dia)
+        : [...intervalo.days_of_week, dia],
+    })
+  }
+
+  const handleToggleAutomacaoTurno = async (turno: TurnoConfigurado) => {
+    if (!turno.id) return
+    const novoValor = !turno.pausar_ops_intervalos
+    setTurnos(prev => prev.map(item => item.id === turno.id ? { ...item, pausar_ops_intervalos: novoValor } : item))
+    const { error } = await supabase
+      .from("turnos")
+      .update({ pausar_ops_intervalos: novoValor })
+      .eq("id", turno.id)
+      .eq("empresa_id", empresaAtivaId!)
+    if (error) {
+      setTurnos(prev => prev.map(item => item.id === turno.id ? { ...item, pausar_ops_intervalos: turno.pausar_ops_intervalos } : item))
+      toast({ title: "Erro ao atualizar automação", description: error.message, variant: "destructive" })
+    }
+  }
+
+  const handleAddIntervalo = async (turno: TurnoConfigurado) => {
+    if (!turno.id || !empresaAtivaId) return
+    const intervalo = novoIntervaloDoTurno(turno.id)
+    if (!intervalo.name.trim() || !intervalo.start_time || !intervalo.end_time || intervalo.days_of_week.length === 0) {
+      toast({ title: "Preencha o intervalo", description: "Informe nome, horários e ao menos um dia da semana.", variant: "destructive" })
+      return
+    }
+    if (intervalo.start_time === intervalo.end_time) {
+      toast({ title: "Horário inválido", description: "O início e o fim do intervalo precisam ser diferentes.", variant: "destructive" })
+      return
+    }
+
+    setSalvandoIntervaloId(turno.id)
+    const executionOrder = Math.max(-1, ...(turno.work_schedule_breaks || []).map(item => item.execution_order)) + 1
+    const { data, error } = await supabase
+      .from("work_schedule_breaks")
+      .insert({
+        tenant_id: empresaAtivaId,
+        schedule_id: turno.id,
+        name: intervalo.name.trim(),
+        start_time: intervalo.start_time,
+        end_time: intervalo.end_time,
+        days_of_week: intervalo.days_of_week,
+        break_type: intervalo.break_type,
+        pause_operations_automatically: true,
+        is_active: true,
+        execution_order: executionOrder,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      toast({ title: "Erro ao criar intervalo", description: error.message, variant: "destructive" })
+    } else {
+      setTurnos(prev => prev.map(item => item.id === turno.id
+        ? { ...item, work_schedule_breaks: [...(item.work_schedule_breaks || []), data as IntervaloTurno] }
+        : item
+      ))
+      setNovosIntervalos(prev => {
+        const proximo = { ...prev }
+        delete proximo[turno.id!]
+        return proximo
+      })
+      toast({ title: "Intervalo programado criado" })
+    }
+    setSalvandoIntervaloId(null)
+  }
+
+  const handleToggleIntervalo = async (turnoId: string, intervalo: IntervaloTurno) => {
+    if (!intervalo.id) return
+    const isActive = !intervalo.is_active
+    setTurnos(prev => prev.map(turno => turno.id === turnoId ? {
+      ...turno,
+      work_schedule_breaks: turno.work_schedule_breaks?.map(item => item.id === intervalo.id ? { ...item, is_active: isActive } : item),
+    } : turno))
+    const { error } = await supabase
+      .from("work_schedule_breaks")
+      .update({ is_active: isActive })
+      .eq("id", intervalo.id)
+      .eq("tenant_id", empresaAtivaId!)
+    if (error) {
+      await carregarTurnos(empresaAtivaId!)
+      toast({ title: "Erro ao atualizar intervalo", description: error.message, variant: "destructive" })
+    }
+  }
+
+  const handleDeleteIntervalo = async (turnoId: string, intervaloId: string) => {
+    const { error } = await supabase
+      .from("work_schedule_breaks")
+      .delete()
+      .eq("id", intervaloId)
+      .eq("tenant_id", empresaAtivaId!)
+    if (error) {
+      toast({ title: "Erro ao remover intervalo", description: error.message, variant: "destructive" })
+      return
+    }
+    setTurnos(prev => prev.map(turno => turno.id === turnoId ? {
+      ...turno,
+      work_schedule_breaks: turno.work_schedule_breaks?.filter(item => item.id !== intervaloId),
+    } : turno))
+    toast({ title: "Intervalo removido" })
   }
 
   if (!session) {
@@ -1037,29 +1206,148 @@ export default function ExataApp() {
                       {loadingTurnos ? (
                         <p className="text-xs text-muted-foreground animate-pulse">Carregando turnos...</p>
                       ) : turnos.length > 0 ? (
-                        <div className="space-y-2">
+                        <div className="space-y-4">
                           {turnos.map(t => {
                             const diasLabel = ["D","S","T","Q","Q","S","S"]
+                            const intervaloNovo = t.id ? novoIntervaloDoTurno(t.id) : NOVO_INTERVALO_PADRAO
                             return (
-                              <div key={t.id} className="flex items-center justify-between p-4 bg-muted/30 border border-border rounded-xl">
-                                <div className="flex items-center gap-4 min-w-0">
-                                  <div>
-                                    <p className="text-sm font-bold text-foreground">{t.nome}</p>
-                                    <p className="text-[10px] text-muted-foreground">{t.hora_inicio} — {t.hora_fim}</p>
+                              <div key={t.id} className="overflow-hidden rounded-2xl border border-border bg-muted/20">
+                                <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+                                  <div className="flex items-center gap-4 min-w-0">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                                      <CalendarClock className="h-5 w-5" />
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-bold text-foreground">{t.nome}</p>
+                                      <p className="text-[10px] text-muted-foreground">{t.hora_inicio} — {t.hora_fim}</p>
+                                    </div>
+                                    <div className="hidden gap-1 sm:flex">
+                                      {[0,1,2,3,4,5,6].map(d => (
+                                        <span key={d} className={`text-[9px] font-bold h-5 w-5 rounded-full flex items-center justify-center
+                                          ${t.dias_semana?.includes(String(d)) ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                                          {diasLabel[d]}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
-                                  <div className="flex gap-1">
-                                    {[0,1,2,3,4,5,6].map(d => (
-                                      <span key={d} className={`text-[9px] font-bold h-5 w-5 rounded-full flex items-center justify-center
-                                        ${t.dias_semana?.includes(String(d)) ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                                        {diasLabel[d]}
+                                  <div className="flex items-center gap-3">
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={t.pausar_ops_intervalos}
+                                      onClick={() => handleToggleAutomacaoTurno(t)}
+                                      className="flex items-center gap-2 text-left"
+                                    >
+                                      <span className={`relative h-6 w-11 rounded-full transition-colors ${t.pausar_ops_intervalos ? "bg-primary" : "bg-muted"}`}>
+                                        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${t.pausar_ops_intervalos ? "translate-x-6" : "translate-x-1"}`} />
                                       </span>
-                                    ))}
+                                      <span className="max-w-44 text-[10px] font-bold leading-tight text-foreground">
+                                        Pausar OPs automaticamente nos intervalos
+                                      </span>
+                                    </button>
+                                    <button onClick={() => t.id && handleDeleteTurno(t.id)}
+                                      aria-label={`Remover turno ${t.nome}`}
+                                      className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0">
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
                                   </div>
                                 </div>
-                                <button onClick={() => t.id && handleDeleteTurno(t.id)}
-                                  className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0 ml-3">
-                                  <X className="h-4 w-4" />
-                                </button>
+
+                                <div className="border-t border-border bg-card/60 p-4 space-y-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                      <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Intervalos da jornada</p>
+                                      <p className="mt-0.5 text-[10px] text-muted-foreground">O fim do intervalo libera a retomada, mas nunca reinicia a operação.</p>
+                                    </div>
+                                    <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-primary">
+                                      {(t.work_schedule_breaks || []).filter(item => item.is_active).length} ativo(s)
+                                    </span>
+                                  </div>
+
+                                  {(t.work_schedule_breaks || []).length > 0 && (
+                                    <div className="space-y-2">
+                                      {(t.work_schedule_breaks || []).map(intervalo => (
+                                        <div key={intervalo.id} className={`flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center sm:justify-between ${intervalo.is_active ? "border-primary/20 bg-primary/5" : "border-border bg-muted/20 opacity-65"}`}>
+                                          <div className="flex items-center gap-3 min-w-0">
+                                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+                                              <Pause className="h-4 w-4" />
+                                            </div>
+                                            <div className="min-w-0">
+                                              <p className="truncate text-xs font-bold text-foreground">{intervalo.name}</p>
+                                              <p className="text-[10px] text-muted-foreground">
+                                                {intervalo.start_time.slice(0, 5)} — {intervalo.end_time.slice(0, 5)} · {intervalo.days_of_week.map(dia => diasLabel[Number(dia)]).join(" ")}
+                                              </p>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-2 self-end sm:self-auto">
+                                            <button
+                                              type="button"
+                                              onClick={() => t.id && handleToggleIntervalo(t.id, intervalo)}
+                                              className={`h-8 rounded-lg px-3 text-[10px] font-bold transition-colors ${intervalo.is_active ? "bg-green-500/10 text-green-600 hover:bg-green-500/20" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+                                            >
+                                              {intervalo.is_active ? "Ativo" : "Inativo"}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => t.id && intervalo.id && handleDeleteIntervalo(t.id, intervalo.id)}
+                                              aria-label={`Remover intervalo ${intervalo.name}`}
+                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {t.id && (
+                                    <div className="rounded-xl border border-dashed border-border p-3 space-y-3">
+                                      <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1fr]">
+                                        <div className="space-y-1.5">
+                                          <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Nome</label>
+                                          <input
+                                            value={intervaloNovo.name}
+                                            onChange={event => atualizarNovoIntervalo(t.id!, { name: event.target.value })}
+                                            placeholder="Ex: Almoço"
+                                            className="h-9 w-full rounded-lg border border-border bg-input px-3 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary"
+                                          />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Início</label>
+                                          <TimePicker value={intervaloNovo.start_time} onChange={value => atualizarNovoIntervalo(t.id!, { start_time: value })} />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                          <label className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Fim</label>
+                                          <TimePicker value={intervaloNovo.end_time} onChange={value => atualizarNovoIntervalo(t.id!, { end_time: value })} />
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="flex flex-wrap gap-1.5">
+                                          {[['0','Dom'],['1','Seg'],['2','Ter'],['3','Qua'],['4','Qui'],['5','Sex'],['6','Sáb']].map(([valor, rotulo]) => (
+                                            <button
+                                              key={valor}
+                                              type="button"
+                                              onClick={() => toggleDiaIntervalo(t.id!, valor)}
+                                              className={`h-7 rounded-lg px-2 text-[9px] font-bold transition-colors ${intervaloNovo.days_of_week.includes(valor) ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                                            >
+                                              {rotulo}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleAddIntervalo(t)}
+                                          disabled={salvandoIntervaloId === t.id}
+                                          className="flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-[10px] font-bold uppercase tracking-wider text-primary-foreground disabled:opacity-50"
+                                        >
+                                          <Plus className="h-3.5 w-3.5" />
+                                          {salvandoIntervaloId === t.id ? "Salvando..." : "Adicionar intervalo"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             )
                           })}

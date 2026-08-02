@@ -5,6 +5,7 @@ import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { Plus, Trash2, Settings, Power, Wrench, Ban, Activity, Factory, Pencil, ChevronDown } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface Maquina {
   id: string
@@ -15,11 +16,15 @@ interface Maquina {
   tempo_setup_padrao: number
   status: "ativa" | "parada" | "manutencao" | "inativa"
   observacao: string
+  turno_id?: string | null
 }
+
+interface TurnoMaquina { id: string; nome: string; hora_inicio: string; hora_fim: string; ativo: boolean }
 
 export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaId: string | null }) {
   const { toast } = useToast()
   const [maquinas, setMaquinas] = useState<Maquina[]>([])
+  const [turnos, setTurnos] = useState<TurnoMaquina[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -30,6 +35,7 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
   const [capacidade, setCapacidade] = useState("")
   const [setup, setSetup] = useState("")
   const [observacao, setObservacao] = useState("")
+  const [turnoId, setTurnoId] = useState("sem_turno")
 
   useEffect(() => {
     if (empresaAtivaId) {
@@ -41,14 +47,23 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
     if (!empresaAtivaId) return
 
     try {
-      const { data, error } = await supabase
-        .from("maquinas")
-        .select("*")
-        .eq("empresa_id", empresaAtivaId)
-        .order("created_at", { ascending: false })
+      const [{ data, error }, { data: turnosData }] = await Promise.all([
+        supabase
+          .from("maquinas")
+          .select("*")
+          .eq("empresa_id", empresaAtivaId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("turnos")
+          .select("id, nome, hora_inicio, hora_fim, ativo")
+          .eq("empresa_id", empresaAtivaId)
+          .eq("ativo", true)
+          .order("hora_inicio"),
+      ])
 
       if (error) throw error
       setMaquinas((data || []) as Maquina[])
+      setTurnos((turnosData || []) as TurnoMaquina[])
     } catch (e: any) {
       toast({ title: "Erro de conexão", description: "Não foi possível carregar o parque fabril.", variant: "destructive" })
     } finally {
@@ -75,7 +90,8 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
         setor: setor.trim(),
         capacidade_diaria: parseFloat(capacidade) || 0,
         tempo_setup_padrao: parseFloat(setup) || 0,
-        observacao: observacao.trim()
+        observacao: observacao.trim(),
+        turno_id: turnoId === "sem_turno" ? null : turnoId,
       }
 
       if (editingId) {
@@ -119,6 +135,7 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
     setCapacidade(maq.capacidade_diaria.toString())
     setSetup(maq.tempo_setup_padrao.toString())
     setObservacao(maq.observacao)
+    setTurnoId(maq.turno_id || "sem_turno")
   }
 
   const resetForm = () => {
@@ -129,6 +146,7 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
     setCapacidade("")
     setSetup("")
     setObservacao("")
+    setTurnoId("sem_turno")
   }
 
   const handleExcluir = async (id: string) => {
@@ -197,6 +215,24 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome/Modelo</label>
                 <input type="text" placeholder="Ex: Torno CNC" value={nome} onChange={(e) => setNome(e.target.value)} className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all" />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Jornada / Turno</label>
+              <Select value={turnoId} onValueChange={setTurnoId}>
+                <SelectTrigger className="h-11 w-full rounded-xl border border-border bg-input text-sm text-foreground">
+                  <SelectValue placeholder="Usar turno ativo pelo horário" />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-border">
+                  <SelectItem value="sem_turno">Usar turno ativo pelo horário</SelectItem>
+                  {turnos.map(turno => (
+                    <SelectItem key={turno.id} value={turno.id}>
+                      {turno.nome} · {turno.hora_inicio.slice(0, 5)}–{turno.hora_fim.slice(0, 5)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground pl-1">O turno do posto tem prioridade sobre equipe e operador nos intervalos programados.</p>
             </div>
 
             <div className="space-y-1.5">
@@ -316,6 +352,10 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
                         <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-0.5">Setup</p>
                         <p className="font-medium text-foreground">{maq.tempo_setup_padrao} min</p>
                       </div>
+                    </div>
+
+                    <div className="rounded-xl bg-muted/30 px-3 py-2 text-[10px] text-muted-foreground">
+                      Jornada: <span className="font-bold text-foreground">{turnos.find(turno => turno.id === maq.turno_id)?.nome || "Turno ativo pelo horário"}</span>
                     </div>
 
                     <div className="flex items-center justify-between pt-2">

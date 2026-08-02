@@ -21,7 +21,8 @@ interface Membro {
 }
 
 interface PostoTrabalho { id: string; codigo: string; nome: string; status: string }
-interface EquipeCadastro { id: string; nome: string; descricao?: string; membros: string[]; postos: string[] }
+interface EquipeCadastro { id: string; nome: string; descricao?: string; turno_id?: string | null; membros: string[]; postos: string[] }
+interface TurnoEquipe { id: string; nome: string; hora_inicio: string; hora_fim: string }
 
 interface RoleDisponivel {
   id: string
@@ -41,6 +42,7 @@ export function EquipeTab() {
   const [rolesDisponiveis, setRolesDisponiveis] = useState<RoleDisponivel[]>([])
   const [postos, setPostos] = useState<PostoTrabalho[]>([])
   const [equipes, setEquipes] = useState<EquipeCadastro[]>([])
+  const [turnos, setTurnos] = useState<TurnoEquipe[]>([])
   const [novaEquipe, setNovaEquipe] = useState('')
   const [carregando, setCarregando]         = useState(true)
   const [expandido, setExpandido]           = useState<string | null>(null)
@@ -64,7 +66,7 @@ export function EquipeTab() {
     setCarregando(true)
 
     // Membros, roles e postos são carregados em lote para evitar N+1.
-    const [{ data: perfis }, { data: postosData }, { data: vinculos }, { data: equipesData }, { data: equipeMembros }, { data: equipePostos }] = await Promise.all([
+    const [{ data: perfis }, { data: postosData }, { data: vinculos }, { data: equipesData }, { data: equipeMembros }, { data: equipePostos }, { data: turnosData }] = await Promise.all([
       supabase
       .from('perfis')
       .select('id, user_id, email, nome, status, first_access_completed')
@@ -72,11 +74,13 @@ export function EquipeTab() {
       .order('nome'),
       supabase.from('maquinas').select('id, codigo, nome, status').eq('empresa_id', empresaId).eq('status', 'ativa').order('nome'),
       supabase.from('usuario_postos_trabalho').select('user_id, maquina_id').eq('empresa_id', empresaId),
-      supabase.from('equipes').select('id, nome, descricao').eq('empresa_id', empresaId).eq('ativo', true).order('nome'),
+      supabase.from('equipes').select('id, nome, descricao, turno_id').eq('empresa_id', empresaId).eq('ativo', true).order('nome'),
       supabase.from('equipe_membros').select('equipe_id, user_id').eq('empresa_id', empresaId),
       supabase.from('equipe_postos_trabalho').select('equipe_id, maquina_id').eq('empresa_id', empresaId),
+      supabase.from('turnos').select('id, nome, hora_inicio, hora_fim').eq('empresa_id', empresaId).eq('ativo', true).order('hora_inicio'),
     ])
     setPostos((postosData ?? []) as PostoTrabalho[])
+    setTurnos((turnosData ?? []) as TurnoEquipe[])
     setEquipes((equipesData ?? []).map((equipe: any) => ({
       ...equipe,
       membros: (equipeMembros ?? []).filter((v: any) => v.equipe_id === equipe.id).map((v: any) => v.user_id),
@@ -241,6 +245,16 @@ export function EquipeTab() {
     if (!error) carregar()
   }
 
+  const atualizarTurnoEquipe = async (equipe: EquipeCadastro, turnoId: string) => {
+    if (!empresaId) return
+    const { error } = await supabase
+      .from('equipes')
+      .update({ turno_id: turnoId === 'sem_turno' ? null : turnoId })
+      .eq('empresa_id', empresaId)
+      .eq('id', equipe.id)
+    if (!error) carregar()
+  }
+
   // ------------------------------------------------------------
   // Render
   // ------------------------------------------------------------
@@ -295,6 +309,21 @@ export function EquipeTab() {
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-bold text-foreground">{equipe.nome}</p>
                   <span className="text-[10px] text-muted-foreground">{equipe.membros.length} membro(s) · {equipe.postos.length} posto(s)</span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Jornada da equipe</p>
+                  <select
+                    value={equipe.turno_id || 'sem_turno'}
+                    onChange={event => atualizarTurnoEquipe(equipe, event.target.value)}
+                    className="h-9 w-full rounded-xl border border-border bg-input px-3 text-xs text-foreground outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="sem_turno">Herdar do posto ou identificar pelo horário</option>
+                    {turnos.map(turno => (
+                      <option key={turno.id} value={turno.id}>
+                        {turno.nome} · {turno.hora_inicio.slice(0, 5)}–{turno.hora_fim.slice(0, 5)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Membros</p>

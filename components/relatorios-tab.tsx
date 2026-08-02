@@ -31,7 +31,12 @@ import {
  * (ex: Almoço, Refeição, Fim de Turno, Troca de Turno, Intervalo Previsto),
  * que NÃO deve ser contabilizado como indisponibilidade de máquina ou falha operacional.
  */
-export function isPausaProgramada(subgrupoNome?: string, grupoNome?: string): boolean {
+export function isPausaProgramada(
+  subgrupoNome?: string,
+  grupoNome?: string,
+  classificacaoExplicita?: boolean,
+): boolean {
+  if (classificacaoExplicita === true) return true
   if (!subgrupoNome && !grupoNome) return false
   const texto = `${subgrupoNome || ""} ${grupoNome || ""}`.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   const termosProgramados = [
@@ -63,6 +68,9 @@ interface Pausa {
   subgrupo_id?: string
   inicio: string
   fim?: string
+  is_scheduled?: boolean
+  exclude_from_machine_downtime?: boolean
+  event_type?: string
   subgrupo?: { nome: string; grupo?: { nome: string } }
 }
 
@@ -79,6 +87,7 @@ interface Maquina {
   id: string
   nome: string
   codigo: string
+  turno_id?: string
 }
 
 interface Operacao {
@@ -94,6 +103,7 @@ interface Operacao {
 interface EmpresaConfigRelatorios {
   tempo_padrao?: number
   unidade_tempo?: string
+  timezone?: string
 }
 
 interface ProdutoRelatorio {
@@ -351,7 +361,7 @@ export function RelatoriosTab({
           .lte("created_at", fim)
           .order("created_at"),
         supabase.from("apontamento_pausas")
-          .select("id, apontamento_id, subgrupo_id, inicio, fim, excecao_subgrupos(nome, excecao_grupos(nome))")
+          .select("id, apontamento_id, subgrupo_id, inicio, fim, event_type, is_scheduled, exclude_from_machine_downtime, excecao_subgrupos(nome, excecao_grupos(nome))")
           .eq("empresa_id", empresaAtivaId!)
           .gte("inicio", inicio)
           .lte("inicio", fim),
@@ -359,7 +369,7 @@ export function RelatoriosTab({
           .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("maquinas")
-          .select("id, nome, codigo")
+          .select("id, nome, codigo, turno_id")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("operacoes")
           .select("id, nome, tempo, unidade, maquina_id, produto_id, ordem")
@@ -374,11 +384,11 @@ export function RelatoriosTab({
           .select("id, codigo, descricao")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("empresas")
-          .select("tempo_padrao, unidade_tempo")
+          .select("tempo_padrao, unidade_tempo, timezone")
           .eq("id", empresaAtivaId!)
           .maybeSingle(),
         supabase.from("turnos")
-          .select("hora_inicio, hora_fim, dias_semana, ativo")
+          .select("id, hora_inicio, hora_fim, dias_semana, ativo, pausar_ops_intervalos, work_schedule_breaks(start_time, end_time, days_of_week, is_active)")
           .eq("empresa_id", empresaAtivaId!)
           .eq("ativo", true),
       ])
@@ -390,6 +400,9 @@ export function RelatoriosTab({
         subgrupo_id: p.subgrupo_id,
         inicio: p.inicio,
         fim: p.fim,
+        event_type: p.event_type,
+        is_scheduled: p.is_scheduled,
+        exclude_from_machine_downtime: p.exclude_from_machine_downtime,
         subgrupo: p.excecao_subgrupos ? {
           nome: p.excecao_subgrupos.nome,
           grupo: p.excecao_subgrupos.excecao_grupos,
@@ -448,19 +461,22 @@ export function RelatoriosTab({
       existentes.push(operacao)
       operacoesPorNome.set(chave, existentes)
     }
-    const tempoProgramado = calcularTempoProgramado(
-      inicio,
-      fim,
-      turnos,
-      empresaConfig?.tempo_padrao,
-      empresaConfig?.unidade_tempo,
-    )
-
     const maquinasParaExibir = selectedMaquinaId === "all"
       ? maquinas
       : maquinas.filter(m => m.id === selectedMaquinaId)
 
     return maquinasParaExibir.map(maq => {
+      const turnosDaMaquina = maq.turno_id
+        ? turnos.filter(turno => turno.id === maq.turno_id)
+        : turnos
+      const tempoProgramado = calcularTempoProgramado(
+        inicio,
+        fim,
+        turnosDaMaquina,
+        empresaConfig?.tempo_padrao,
+        empresaConfig?.unidade_tempo,
+        empresaConfig?.timezone,
+      )
       const apsMAq = filteredApontamentos.filter(a => {
         if (a.status === "em_andamento") return false
         const effectiveMqId = a.maquina_id || (a.operacao_id ? operacoesMap.get(a.operacao_id) : null)
@@ -631,6 +647,7 @@ export function RelatoriosTab({
     const mapa: Record<string, { grupo: string; motivo: string; totalSeg: number; count: number }> = {}
     for (const p of pausas) {
       if (!p.fim) continue
+      if (p.exclude_from_machine_downtime || isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome, p.is_scheduled)) continue
       const seg = (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
       const motivo = p.subgrupo?.nome ?? "Sem motivo"
       const grupo = p.subgrupo?.grupo?.nome ?? "Sem grupo"
@@ -689,6 +706,7 @@ export function RelatoriosTab({
     const totalSegundos = apontamentosConcluidos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
     const totalPausaSeg = pausas.reduce((s, p) => {
       if (!p.fim) return s
+      if (p.exclude_from_machine_downtime || isPausaProgramada(p.subgrupo?.nome, p.subgrupo?.grupo?.nome, p.is_scheduled)) return s
       return s + (new Date(p.fim).getTime() - new Date(p.inicio).getTime()) / 1000
     }, 0)
     const temBaseRefugo = totalProcessadas > 0

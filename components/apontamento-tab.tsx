@@ -6,11 +6,12 @@ import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
 import { isPausaProgramada } from "@/components/relatorios-tab"
+import { temPermissaoOverrideIntervalo } from "@/lib/scheduled-break-policy"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, ClipboardList, AlertTriangle, CheckCircle2, Clock,
   Package, Factory, X, Wrench, Search, MapPin, UserRound, CalendarDays,
-  Gauge, Layers3, ChevronRight
+  Gauge, Layers3, ChevronRight, History, ShieldCheck
 } from "lucide-react"
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
@@ -34,14 +35,19 @@ interface Operacao {
 
 interface Apontamento {
   id: string
+  user_id?: string
   ordem_id: string
   operacao_id?: string
   operacao_nome?: string
+  maquina_id?: string
+  cronometro_inicio?: string | null
   cronometro_total_segundos: number
   pecas_produzidas: number
   pecas_refugo: number
   pecas_retrabalho: number
   status: string
+  estado_operacao?: "em_execucao" | "pausada_manual" | "pausada_intervalo_programado" | "aguardando_retomada" | "finalizada"
+  intervalo_programado_evento_id?: string | null
   encerramento?: string
   created_at: string
 }
@@ -67,6 +73,24 @@ interface SessaoAtiva {
   pausaInicioTimestamp?: number
   pausaId?: string
   cicloPlanejadoSeg?: number
+  estadoOperacao?: "em_execucao" | "pausada_manual" | "pausada_intervalo_programado" | "aguardando_retomada"
+  intervaloNome?: string
+  intervaloInicioTimestamp?: number
+  intervaloFimTimestamp?: number
+}
+
+interface EventoOrdem {
+  id: string
+  apontamento_id?: string
+  event_type: string
+  event_category: string
+  source: string
+  started_at: string
+  scheduled_end_at?: string
+  ended_at?: string
+  resumed_at?: string
+  resumed_by?: string
+  metadata?: { break_name?: string; action?: string; justification?: string }
 }
 
 const SESSAO_KEY = "exata_apontamento_sessao_"
@@ -317,7 +341,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
 
 export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   const { toast } = useToast()
-  const { session } = useAuth()
+  const { session, supabaseUser } = useAuth()
 
   const [ordens, setOrdens] = useState<OrdemProducao[]>([])
   const [apontamentos, setApontamentos] = useState<Apontamento[]>([])
@@ -340,6 +364,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   // Sessões ativas (pode ter mais de uma rodando ao mesmo tempo, uma por operação/máquina)
   const [sessoes, setSessoes] = useState<SessaoAtiva[]>([])
   const [segundosMap, setSegundosMap] = useState<Record<string, number>>({})
+  const [eventosOrdem, setEventosOrdem] = useState<EventoOrdem[]>([])
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Modais (sessaoEmAcaoId identifica qual sessão da lista está sendo pausada/finalizada)
@@ -351,13 +376,17 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [dadosFinalizar, setDadosFinalizar] = useState<{ produzidas: number; refugo: number; retrabalho: number; encerramento: "continuar" | "encerrar" | "encerrar_parcial" } | null>(null)
   const [showAvisoEstoque, setShowAvisoEstoque] = useState(false)
   const [avisoItens, setAvisoItens] = useState<{ codigo: string; descricao: string; disponivel: number; necessario: number; unidade: string }[]>([])
+  const [showOverrideIntervalo, setShowOverrideIntervalo] = useState(false)
+  const [justificativaOverride, setJustificativaOverride] = useState("")
+  const [acaoOverride, setAcaoOverride] = useState<"iniciar" | "retomar" | null>(null)
+  const [processandoOverride, setProcessandoOverride] = useState(false)
 
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
   const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const [opsRes, apRes, gRes, postosRes] = await Promise.all([
         supabase.from("ordens_producao")
@@ -365,7 +394,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           .eq("empresa_id", empresaAtivaId!)
           .order("data_programacao", { ascending: true }),
         supabase.from("apontamentos")
-          .select("id, ordem_id, operacao_id, operacao_nome, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, encerramento, created_at")
+          .select("id, user_id, ordem_id, operacao_id, operacao_nome, maquina_id, cronometro_inicio, cronometro_total_segundos, pecas_produzidas, pecas_refugo, pecas_retrabalho, status, estado_operacao, intervalo_programado_evento_id, encerramento, created_at")
           .eq("empresa_id", empresaAtivaId!)
           .order("created_at", { ascending: false }),
         supabase.from("excecao_grupos")
@@ -441,6 +470,86 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       setGrupos(gruposFormatados)
       const postosAtivos = (postosRes.data || []) as PostoTrabalho[]
       setPostos(postosAtivos)
+
+      const apontamentosAtivos = ((apRes.data || []) as Apontamento[]).filter(apontamento =>
+        apontamento.status === "em_andamento"
+        && (!supabaseUser?.id || apontamento.user_id === supabaseUser.id),
+      )
+      const idsAtivos = apontamentosAtivos.map(apontamento => apontamento.id)
+      const operacoesAtivasIds = apontamentosAtivos.map(apontamento => apontamento.operacao_id).filter(Boolean) as string[]
+
+      if (idsAtivos.length > 0) {
+        const [{ data: pausasAtivas }, { data: eventos }, { data: ciclos }] = await Promise.all([
+          supabase
+            .from("apontamento_pausas")
+            .select("id, apontamento_id, inicio, fim, scheduled_event_id")
+            .eq("empresa_id", empresaAtivaId!)
+            .in("apontamento_id", idsAtivos)
+            .order("inicio", { ascending: false }),
+          supabase
+            .from("production_order_events")
+            .select("id, apontamento_id, event_type, event_category, source, started_at, scheduled_end_at, ended_at, resumed_at, resumed_by, metadata")
+            .eq("tenant_id", empresaAtivaId!)
+            .in("apontamento_id", idsAtivos)
+            .order("started_at", { ascending: false }),
+          operacoesAtivasIds.length > 0
+            ? supabase.from("operacoes").select("id, tempo, unidade").in("id", operacoesAtivasIds)
+            : Promise.resolve({ data: [] as any[] }),
+        ])
+
+        const eventosTipados = (eventos || []) as EventoOrdem[]
+        setEventosOrdem(eventosTipados)
+        const agora = Date.now()
+        const sessoesBanco: SessaoAtiva[] = apontamentosAtivos.map(apontamento => {
+          const estadoOperacao: SessaoAtiva["estadoOperacao"] = apontamento.estado_operacao === "finalizada"
+            ? "em_execucao"
+            : apontamento.estado_operacao || "em_execucao"
+          const eventoIntervalo = eventosTipados.find(evento =>
+            evento.id === apontamento.intervalo_programado_evento_id
+          ) || eventosTipados.find(evento =>
+            evento.apontamento_id === apontamento.id && evento.event_type === "scheduled_break"
+          )
+          const pausa = (pausasAtivas || []).find((item: any) =>
+            item.apontamento_id === apontamento.id
+            && (!item.fim || item.scheduled_event_id === apontamento.intervalo_programado_evento_id)
+          ) as any
+          const ciclo = (ciclos || []).find((item: any) => item.id === apontamento.operacao_id) as any
+          const cicloPlanejadoSeg = ciclo
+            ? Number(ciclo.tempo) * (ciclo.unidade === "minutes" ? 60 : ciclo.unidade === "hours" ? 3600 : 1)
+            : undefined
+          const estaRodando = estadoOperacao === "em_execucao" && !!apontamento.cronometro_inicio
+          const inicioTimestamp = estaRodando
+            ? new Date(apontamento.cronometro_inicio!).getTime()
+            : agora
+          const pausaInicio = estadoOperacao !== "em_execucao"
+            ? new Date(eventoIntervalo?.started_at || pausa?.inicio || agora).getTime()
+            : undefined
+
+          return {
+            apontamentoId: apontamento.id,
+            ordemId: apontamento.ordem_id,
+            operacaoId: apontamento.operacao_id || "",
+            operacaoNome: apontamento.operacao_nome || "Operação",
+            maquinaId: apontamento.maquina_id,
+            maquinaNome: postosAtivos.find(posto => posto.id === apontamento.maquina_id)?.nome || "Posto de trabalho",
+            inicioTimestamp,
+            segundosAcumulados: apontamento.cronometro_total_segundos || 0,
+            milissegundosAcumulados: (apontamento.cronometro_total_segundos || 0) * MILISSEGUNDOS_POR_SEGUNDO,
+            pausaInicioTimestamp: pausaInicio,
+            pausaId: pausa?.fim ? undefined : pausa?.id,
+            cicloPlanejadoSeg,
+            estadoOperacao,
+            intervaloNome: eventoIntervalo?.metadata?.break_name,
+            intervaloInicioTimestamp: eventoIntervalo ? new Date(eventoIntervalo.started_at).getTime() : undefined,
+            intervaloFimTimestamp: eventoIntervalo?.scheduled_end_at ? new Date(eventoIntervalo.scheduled_end_at).getTime() : undefined,
+          }
+        })
+        setSessoes(sessoesBanco)
+      } else {
+        setEventosOrdem([])
+        setSessoes([])
+      }
+
       const salvo = localStorage.getItem(`exata_posto_trabalho_${empresaAtivaId}`)
       if (salvo && postosAtivos.some((posto: PostoTrabalho) => posto.id === salvo)) {
         setPostoSelecionadoId(salvo)
@@ -450,9 +559,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     } catch (err) {
       console.error("Erro critico na carga:", err)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [empresaAtivaId, toast])
+  }, [empresaAtivaId, toast, supabaseUser?.id])
 
   useEffect(() => {
     if (empresaAtivaId) {
@@ -466,6 +575,21 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           setSessoes(lista)
         } catch { }
       }
+    }
+  }, [empresaAtivaId, loadData])
+
+  // O estado oficial fica no banco. A consulta periódica reflete a automação
+  // mesmo quando outra tela ou o job do servidor alterou o apontamento.
+  useEffect(() => {
+    if (!empresaAtivaId) return
+    const interval = window.setInterval(() => loadData(true), 10_000)
+    const sincronizarAoVoltar = () => {
+      if (document.visibilityState === "visible") loadData(true)
+    }
+    document.addEventListener("visibilitychange", sincronizarAoVoltar)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener("visibilitychange", sincronizarAoVoltar)
     }
   }, [empresaAtivaId, loadData])
 
@@ -621,7 +745,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   // ─── Iniciar ───────────────────────────────────────────────────────────────
 
-  const handleIniciar = async (operacaoId = operacaoSelecionadaId) => {
+  const podeSobrescreverIntervalo = temPermissaoOverrideIntervalo(session?.roles || [])
+
+  const handleIniciar = async (
+    operacaoId = operacaoSelecionadaId,
+    overrideIntervalo = false,
+    justificativa?: string,
+  ) => {
     if (!ordemSelecionadaId || !operacaoId || !postoSelecionadoId) {
       toast({ title: "Selecione a OP e a operação", variant: "destructive" })
       return
@@ -679,9 +809,24 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       p_ordem_id: ordemSelecionadaId,
       p_operacao_id: operacaoId,
       p_maquina_id: postoSelecionadoId,
+      p_override: overrideIntervalo,
+      p_justificativa: justificativa || null,
     })
 
-    if (error) { toast({ title: "Erro ao iniciar", description: error.message, variant: "destructive" }); return }
+    if (error) {
+      const ehBloqueioIntervalo = error.message.includes("intervalo programado")
+      if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
+        setAcaoOverride("iniciar")
+        setJustificativaOverride("")
+        setShowOverrideIntervalo(true)
+      }
+      toast({
+        title: ehBloqueioIntervalo ? "Intervalo programado em andamento" : "Erro ao iniciar",
+        description: error.message,
+        variant: "destructive",
+      })
+      return
+    }
 
     const ordemAtualizada = { id: ordemSelecionadaId, status: "em_andamento" }
 
@@ -692,10 +837,11 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       operacaoNome: op.nome,
       maquinaId: maquinaIdDefinitiva ?? undefined,
       maquinaNome: postos.find(p => p.id === postoSelecionadoId)?.nome ?? "Posto de trabalho",
-      inicioTimestamp: inicioSolicitadoTimestamp,
+      inicioTimestamp: data.cronometro_inicio ? new Date(data.cronometro_inicio).getTime() : inicioSolicitadoTimestamp,
       segundosAcumulados: 0,
       milissegundosAcumulados: 0,
       cicloPlanejadoSeg,
+      estadoOperacao: "em_execucao",
     }
     setApontamentos((atuais) => [data as Apontamento, ...atuais])
     if (ordemAtualizada) {
@@ -724,22 +870,17 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     if (!sessao) return
     setShowModalPausa(false)
 
-    const agora = Date.now()
-    const totalAtualMs = calcularMilissegundosDecorridos(sessao, agora)
-    const totalAtualSegundos = Math.floor(totalAtualMs / MILISSEGUNDOS_POR_SEGUNDO)
+    const { data: pausa, error } = await supabase.rpc("pausar_apontamento_manual", {
+      p_empresa_id: empresaAtivaId,
+      p_apontamento_id: sessao.apontamentoId,
+      p_subgrupo_id: subgrupoId,
+    })
 
-    const { data: pausa, error } = await supabase
-      .from("apontamento_pausas")
-      .insert({
-        empresa_id: empresaAtivaId,
-        apontamento_id: sessao.apontamentoId,
-        subgrupo_id: subgrupoId,
-        inicio: new Date(agora).toISOString(),
-      })
-      .select()
-      .single()
+    if (error) { toast({ title: "Erro ao registrar pausa", description: error.message, variant: "destructive" }); return }
 
-    if (error) { toast({ title: "Erro ao registrar pausa", variant: "destructive" }); return }
+    const agora = new Date((pausa as any).paused_at).getTime()
+    const totalAtualSegundos = Number((pausa as any).total_seconds) || 0
+    const totalAtualMs = totalAtualSegundos * MILISSEGUNDOS_POR_SEGUNDO
 
     const sessaoAtualizada: SessaoAtiva = {
       ...sessao,
@@ -747,7 +888,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       milissegundosAcumulados: totalAtualMs,
       inicioTimestamp: agora,
       pausaInicioTimestamp: agora,
-      pausaId: pausa.id,
+      pausaId: (pausa as any).pausa_id,
+      estadoOperacao: "pausada_manual",
     }
     salvarSessoes(sessoes.map(s => s.apontamentoId === sessao.apontamentoId ? sessaoAtualizada : s))
 
@@ -771,30 +913,73 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   // ─── Retomar ───────────────────────────────────────────────────────────────
 
-  const handleRetomar = async (apontamentoId: string) => {
+  const handleRetomar = async (
+    apontamentoId: string,
+    overrideIntervalo = false,
+    justificativa?: string,
+  ) => {
     const sessao = sessoes.find(s => s.apontamentoId === apontamentoId)
-    if (!sessao?.pausaId) return
+    if (!sessao) return
 
-    // A retomada tambem vale desde o clique, independentemente da rede.
-    const retomadaTimestamp = Date.now()
-    const { error } = await supabase
-      .from("apontamento_pausas")
-      .update({ fim: new Date(retomadaTimestamp).toISOString() })
-      .eq("id", sessao.pausaId)
+    const { data, error } = await supabase.rpc("retomar_apontamento", {
+      p_empresa_id: empresaAtivaId,
+      p_apontamento_id: apontamentoId,
+      p_override: overrideIntervalo,
+      p_justificativa: justificativa || null,
+    })
 
     if (error) {
-      toast({ title: "Erro ao retomar a produção", description: error.message, variant: "destructive" })
+      const ehBloqueioIntervalo = error.message.includes("intervalo programado")
+      if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
+        setSessaoEmAcaoId(apontamentoId)
+        setAcaoOverride("retomar")
+        setJustificativaOverride("")
+        setShowOverrideIntervalo(true)
+      }
+      toast({
+        title: ehBloqueioIntervalo ? "Retomada bloqueada durante o intervalo" : "Erro ao retomar a produção",
+        description: error.message,
+        variant: "destructive",
+      })
       return
     }
 
+    const retomadaTimestamp = new Date((data as any).resumed_at).getTime()
+    const segundosAcumulados = Number((data as any).total_seconds) || sessao.segundosAcumulados
     const sessaoAtualizada: SessaoAtiva = {
       ...sessao,
       inicioTimestamp: retomadaTimestamp,
+      segundosAcumulados,
+      milissegundosAcumulados: segundosAcumulados * MILISSEGUNDOS_POR_SEGUNDO,
       pausaInicioTimestamp: undefined,
       pausaId: undefined,
+      estadoOperacao: "em_execucao",
+      intervaloNome: undefined,
+      intervaloInicioTimestamp: undefined,
+      intervaloFimTimestamp: undefined,
     }
     salvarSessoes(sessoes.map(s => s.apontamentoId === sessao.apontamentoId ? sessaoAtualizada : s))
-    toast({ title: "▶ Produção retomada" })
+    setShowOverrideIntervalo(false)
+    setAcaoOverride(null)
+    setJustificativaOverride("")
+    toast({ title: "Produção retomada" })
+  }
+
+  const handleConfirmarOverride = async () => {
+    if (justificativaOverride.trim().length < 5 || !acaoOverride) return
+    setProcessandoOverride(true)
+    try {
+      if (acaoOverride === "iniciar") {
+        await handleIniciar(operacaoSelecionadaId, true, justificativaOverride.trim())
+      } else if (sessaoEmAcaoId) {
+        await handleRetomar(sessaoEmAcaoId, true, justificativaOverride.trim())
+      }
+      setShowOverrideIntervalo(false)
+      setAcaoOverride(null)
+      setJustificativaOverride("")
+    } finally {
+      setProcessandoOverride(false)
+    }
   }
 
   // ─── Verificação de estoque antes de encerrar ──────────────────────────────
@@ -803,6 +988,15 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     produzidas: number; refugo: number; retrabalho: number
     encerramento: "continuar" | "encerrar" | "encerrar_parcial"
   }) => {
+    const sessaoAtual = sessoes.find(s => s.apontamentoId === sessaoEmAcaoId)
+    if (sessaoAtual?.estadoOperacao === "pausada_intervalo_programado" || sessaoAtual?.estadoOperacao === "aguardando_retomada") {
+      toast({
+        title: "Retome a operação antes de finalizar",
+        description: "O intervalo programado fica preservado no histórico da OP.",
+        variant: "destructive",
+      })
+      return
+    }
     if (finalizandoRef.current) return // já tem uma finalização em andamento, ignora clique duplicado
     finalizandoRef.current = true
     setFinalizando(true)
@@ -1093,6 +1287,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     ? segundosMap[sessaoAtiva.apontamentoId] ?? sessaoAtiva.segundosAcumulados
     : 0
   const sessaoEmPausa = !!sessaoAtiva?.pausaInicioTimestamp
+  const pausaIntervaloProgramado = sessaoAtiva?.estadoOperacao === "pausada_intervalo_programado"
+  const aguardandoRetomada = sessaoAtiva?.estadoOperacao === "aguardando_retomada"
+  const eventosSessaoAtiva = eventosOrdem.filter(evento => evento.apontamento_id === sessaoAtiva?.apontamentoId)
   const cicloAtivo = sessaoAtiva?.cicloPlanejadoSeg
   const ciclosCompletos = cicloAtivo && cicloAtivo > 0 ? Math.floor(segundosAtivos / cicloAtivo) : 0
   const tempoNoCicloAtual = cicloAtivo && cicloAtivo > 0
@@ -1104,8 +1301,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const percentualRitmo = cicloAtivo && cicloAtivo > 0
     ? (tempoNoCicloAtual / cicloAtivo) * 100
     : null
-  const ritmo = sessaoEmPausa
-    ? { label: "Operação pausada", detalhe: "O cronômetro está interrompido", cor: "#f59e0b", texto: "text-amber-500" }
+  const ritmo = pausaIntervaloProgramado
+    ? { label: "Pausada — intervalo programado", detalhe: "Pausa automática do sistema", cor: "#f59e0b", texto: "text-amber-500" }
+    : aguardandoRetomada
+      ? { label: "Aguardando retomada", detalhe: "Confirmação do operador necessária", cor: "#3b82f6", texto: "text-blue-500" }
+      : sessaoEmPausa
+        ? { label: "Operação pausada", detalhe: "O cronômetro está interrompido", cor: "#f59e0b", texto: "text-amber-500" }
     : percentualRitmo === null
       ? { label: "Operação em andamento", detalhe: "Sem ciclo padrão cadastrado", cor: "hsl(var(--primary))", texto: "text-primary" }
       : percentualRitmo <= 90
@@ -1132,6 +1333,58 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     <div className="space-y-6 pb-12">
 
       {/* Modais */}
+      {showOverrideIntervalo && renderModalPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-5 rounded-2xl border border-border bg-card p-6 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-foreground">Exceção ao intervalo programado</h3>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {acaoOverride === "iniciar"
+                    ? "Você está autorizando o início de uma operação durante o intervalo."
+                    : "Você está autorizando uma retomada antes do fim do intervalo."}
+                  {" "}A ação ficará registrada no histórico da OP.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Justificativa obrigatória</label>
+              <textarea
+                value={justificativaOverride}
+                onChange={event => setJustificativaOverride(event.target.value)}
+                rows={3}
+                autoFocus
+                placeholder="Explique por que a exceção é necessária"
+                className="w-full resize-none rounded-xl border border-border bg-input px-4 py-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="text-[10px] text-muted-foreground">Mínimo de 5 caracteres.</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowOverrideIntervalo(false); setAcaoOverride(null); setJustificativaOverride("") }}
+                disabled={processandoOverride}
+                className="h-11 flex-1 rounded-xl border border-border text-sm font-bold text-muted-foreground hover:bg-muted disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmarOverride}
+                disabled={processandoOverride || justificativaOverride.trim().length < 5}
+                className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-primary text-sm font-bold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                {processandoOverride ? "Registrando..." : "Autorizar exceção"}
+              </button>
+            </div>
+          </div>
+        </div>,
+      )}
+
       {/* Modal sugestão de OS de manutenção */}
       {showSugestaoManutencao && renderModalPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
@@ -1569,11 +1822,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                     )}
 
                     {sessaoAtiva && (
-                      <div className="mt-5 flex items-center gap-3 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-green-700 dark:text-green-400">
-                        <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-green-500" />
+                      <div className={`mt-5 flex items-center gap-3 rounded-2xl border px-4 py-3 ${sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-green-500/25 bg-green-500/10 text-green-700 dark:text-green-400"}`}>
+                        <span className={`h-2.5 w-2.5 rounded-full ${sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500"}`} />
                         <div>
                           <p className="text-sm font-black">{sessaoAtiva.operacaoNome}</p>
-                          <p className="text-[11px] font-medium opacity-80">A operação está sendo registrada em {postoAtual.codigo}.</p>
+                          <p className="text-[11px] font-medium opacity-80">
+                            {sessaoEmPausa ? "A operação permanece aberta, com o tempo produtivo interrompido." : `A operação está sendo registrada em ${postoAtual.codigo}.`}
+                          </p>
                         </div>
                       </div>
                     )}
@@ -1627,7 +1882,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           <div className="rounded-2xl border border-border bg-muted/25 p-4">
                             <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Orientação</p>
                             <p className="mt-1 text-sm font-black text-foreground">
-                              {sessaoEmPausa ? "Retome quando estiver pronto" : cicloAtivo ? "Acompanhe o ciclo padrão" : "Registre qualquer interrupção"}
+                              {pausaIntervaloProgramado
+                                ? "Aguarde o fim do intervalo"
+                                : aguardandoRetomada
+                                  ? "Confirme para voltar a produzir"
+                                  : sessaoEmPausa
+                                    ? "Retome quando estiver pronto"
+                                    : cicloAtivo ? "Acompanhe o ciclo padrão" : "Registre qualquer interrupção"}
                             </p>
                           </div>
                         </div>
@@ -1635,9 +1896,19 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                         <div className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-border bg-muted/25 p-4">
                           <Clock className={"h-6 w-6 shrink-0 " + ritmo.texto} />
                           <div>
-                            <p className="text-sm font-black text-foreground">{sessaoEmPausa ? "Cronômetro em pausa" : "Tempo sendo registrado automaticamente"}</p>
+                            <p className="text-sm font-black text-foreground">
+                              {pausaIntervaloProgramado
+                                ? "Operação pausada automaticamente"
+                                : aguardandoRetomada
+                                  ? "Aguardando retomada"
+                                  : sessaoEmPausa ? "Cronômetro em pausa" : "Tempo sendo registrado automaticamente"}
+                            </p>
                             <p className="mt-0.5 text-xs text-muted-foreground">
-                              {sessaoEmPausa ? "O período parado não será somado ao tempo produtivo." : "Use Pausar para registrar intervalos, falhas ou manutenção."}
+                              {pausaIntervaloProgramado && sessaoAtiva.intervaloInicioTimestamp && sessaoAtiva.intervaloFimTimestamp
+                                ? `Operação pausada automaticamente devido ao intervalo programado das ${new Date(sessaoAtiva.intervaloInicioTimestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} às ${new Date(sessaoAtiva.intervaloFimTimestamp).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}.`
+                                : aguardandoRetomada
+                                  ? "O intervalo terminou. O tempo só voltará a contar após sua confirmação."
+                                  : sessaoEmPausa ? "O período parado não será somado ao tempo produtivo." : "Use Pausar para registrar falhas ou manutenção."}
                             </p>
                           </div>
                         </div>
@@ -1646,10 +1917,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           {sessaoEmPausa ? (
                             <button
                               type="button"
-                              onClick={() => handleRetomar(sessaoAtiva.apontamentoId)}
-                              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-green-600 text-sm font-black text-white transition-colors hover:bg-green-500"
+                              onClick={() => {
+                                setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
+                                handleRetomar(sessaoAtiva.apontamentoId)
+                              }}
+                              className={`flex h-14 items-center justify-center gap-2 rounded-2xl text-sm font-black text-white transition-colors ${pausaIntervaloProgramado && !podeSobrescreverIntervalo ? "cursor-not-allowed bg-muted text-muted-foreground" : "bg-green-600 hover:bg-green-500"}`}
                             >
-                              <Play className="h-5 w-5 fill-current" /> Retomar operação
+                              <Play className="h-5 w-5 fill-current" />
+                              {pausaIntervaloProgramado && podeSobrescreverIntervalo ? "Retomar com autorização" : "Retomar operação"}
                             </button>
                           ) : (
                             <button
@@ -1667,15 +1942,48 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           )}
                           <button
                             type="button"
+                            disabled={pausaIntervaloProgramado || aguardandoRetomada}
                             onClick={() => {
                               setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
                               setShowModalFinalizar(true)
                             }}
-                            className="flex h-14 items-center justify-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 text-sm font-black text-destructive transition-colors hover:bg-destructive/10"
+                            className="flex h-14 items-center justify-center gap-2 rounded-2xl border border-destructive/30 bg-destructive/5 text-sm font-black text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <Square className="h-5 w-5" /> Finalizar e registrar
                           </button>
                         </div>
+
+                        {eventosSessaoAtiva.length > 0 && (
+                          <div className="mt-5 w-full rounded-2xl border border-border bg-muted/20 p-4">
+                            <div className="mb-3 flex items-center gap-2">
+                              <History className="h-4 w-4 text-primary" />
+                              <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Histórico da OP</p>
+                            </div>
+                            <div className="space-y-2">
+                              {eventosSessaoAtiva.slice(0, 6).map(evento => {
+                                const ehIntervalo = evento.event_type === "scheduled_break"
+                                const ehExcecao = evento.event_type === "scheduled_break_override"
+                                return (
+                                  <div key={evento.id} className={`flex items-start gap-3 rounded-xl border p-3 ${ehIntervalo ? "border-amber-500/20 bg-amber-500/5" : "border-primary/20 bg-primary/5"}`}>
+                                    <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${ehIntervalo ? "bg-amber-500/10 text-amber-600" : "bg-primary/10 text-primary"}`}>
+                                      {ehExcecao ? <ShieldCheck className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-foreground">
+                                        {ehExcecao ? "Exceção autorizada" : evento.metadata?.break_name || "Intervalo programado"}
+                                      </p>
+                                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                                        {new Date(evento.started_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                                        {evento.ended_at ? ` — ${new Date(evento.ended_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : " — em andamento"}
+                                        {ehExcecao && evento.metadata?.justification ? ` · ${evento.metadata.justification}` : ""}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </section>
