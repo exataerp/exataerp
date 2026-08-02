@@ -22,7 +22,7 @@ import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Copy, Check, Eye, EyeOff, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
+  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
 } from "lucide-react"
 
 type TabId = AbaId
@@ -45,12 +45,8 @@ export default function ExataApp() {
   const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
+  const userEmail      = session?.user?.email ?? ""
   const visibleNavItems = NAV_ITEMS.filter(item => canAccess(item.id))
-
-  // código de acesso (card de configurações)
-  const [codigoAtual,  setCodigoAtual]  = useState<string | null>(null)
-  const [showCodigo,   setShowCodigo]   = useState(false)
-  const [copiadoConf,  setCopiadoConf]  = useState(false)
 
   // configurações
   const [defaultTime,     setDefaultTime]     = useState("")
@@ -152,31 +148,18 @@ export default function ExataApp() {
   useEffect(() => {
     if (!empresaAtivaId) return
     carregarAlertas(empresaAtivaId)
-    carregarConfFabrica(empresaAtivaId)
-    carregarTurnos(empresaAtivaId)
-    // busca o código de acesso para exibir nas configurações
-    supabase
-      .from("codigos_acesso")
-      .select("codigo")
-      .eq("empresa_id", empresaAtivaId)
-      .single()
-      .then(({ data }) => { if (data) setCodigoAtual(data.codigo) })
-  }, [empresaAtivaId])
+    if (isSystemManager) {
+      carregarConfFabrica(empresaAtivaId)
+      carregarTurnos(empresaAtivaId)
+    }
+  }, [empresaAtivaId, isSystemManager])
 
   // Recarrega configurações sempre que o usuário acessar a aba de configurações
   useEffect(() => {
-    if (activeTab === "configuracoes" && empresaAtivaId) {
+    if (isSystemManager && activeTab === "configuracoes" && empresaAtivaId) {
       carregarConfFabrica(empresaAtivaId)
     }
-  }, [activeTab, empresaAtivaId])
-
-  // helper de cópia
-  const copiarCodigo = (codigo: string, setter: (v: boolean) => void) => {
-    navigator.clipboard.writeText(codigo).then(() => {
-      setter(true)
-      setTimeout(() => setter(false), 2000)
-    })
-  }
+  }, [activeTab, empresaAtivaId, isSystemManager])
 
   // --- Alertas automáticos ---
   const carregarAlertas = async (empId: string) => {
@@ -916,6 +899,8 @@ export default function ExataApp() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
+                  {isSystemManager && (
+                    <React.Fragment>
                   {/* ── DADOS DA FÁBRICA ── */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border">
@@ -1095,37 +1080,43 @@ export default function ExataApp() {
                       </div>
                     </div>
                   </div>
+                    </React.Fragment>
+                  )}
 
-                  {/* ── CÓDIGO DE ACESSO ── */}
+                  {/* ── CREDENCIAIS DE ACESSO ── */}
                   <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
                     <div className="px-6 py-4 border-b border-border flex items-center gap-2">
                       <Key className="h-4 w-4 text-primary" />
                       <div>
-                        <h3 className="text-sm font-bold text-foreground">Código de Acesso</h3>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Chave de entrada nesta fábrica</p>
+                        <h3 className="text-sm font-bold text-foreground">Credenciais de Acesso</h3>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Dados utilizados para entrar no sistema</p>
                       </div>
                     </div>
-                    <div className="p-6 space-y-3">
-                      <div className="bg-muted rounded-xl p-4 flex items-center justify-between gap-3">
-                        <span className="text-xl font-black tracking-[0.25em] text-foreground">
-                          {showCodigo ? (codigoAtual ?? "—") : "••••••"}
-                        </span>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <button onClick={() => setShowCodigo(!showCodigo)}
-                            className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                            title={showCodigo ? "Ocultar" : "Mostrar"}>
-                            {showCodigo ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                          {codigoAtual && (
-                            <button onClick={() => copiarCodigo(codigoAtual, setCopiadoConf)}
-                              className="h-8 w-8 flex items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                              title="Copiar código">
-                              {copiadoConf ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
-                            </button>
-                          )}
-                        </div>
+                    <div className="p-6 space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">E-mail</label>
+                        <input
+                          type="email"
+                          value={userEmail}
+                          readOnly
+                          aria-readonly="true"
+                          className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default"
+                        />
                       </div>
-                      <p className="text-[10px] text-muted-foreground">Compartilhe apenas com pessoas autorizadas a acessar esta fábrica.</p>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Senha</label>
+                        <input
+                          type="text"
+                          value="••••••••••••"
+                          readOnly
+                          aria-readonly="true"
+                          aria-label="Senha cadastrada e protegida"
+                          className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm tracking-[0.2em] outline-none cursor-default"
+                        />
+                      </div>
+                      <p className="text-[10px] leading-relaxed text-muted-foreground">
+                        As credenciais são somente para consulta. A senha permanece protegida e não pode ser visualizada ou alterada nesta tela.
+                      </p>
                     </div>
                   </div>
 
@@ -1184,7 +1175,7 @@ export default function ExataApp() {
                         { title: "Manutenção", desc: "Gerencie ordens de serviço corretivas e preventivas por ativo. Status atualizável diretamente na lista." },
                         { title: "Relatórios", desc: "OEE por máquina, refugo por produto, ciclo real vs planejado, consumo de materiais e ranking de paradas. Filtros por período." },
                         { title: "Dashboard", desc: "Visão em tempo real: status das máquinas, OPs em andamento com progresso, estoque crítico e produção por máquina. Auto-refresh a cada 2 minutos." },
-                        { title: "Código de Acesso", desc: "O código de 6 caracteres é a única forma de entrar na fábrica. Compartilhe com cuidado. Qualquer dispositivo com o código acessa os mesmos dados." },
+                        { title: "Credenciais de Acesso", desc: "O e-mail identifica o usuário no login. A senha permanece mascarada e não pode ser alterada nas configurações." },
                       ].map(({ title, desc }) => (
                         <div key={title} className="space-y-1 border-l-2 border-primary/30 pl-3">
                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{title}</p>
