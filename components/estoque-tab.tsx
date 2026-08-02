@@ -102,12 +102,29 @@ function ModalRecebimento({ insumos, localId, empresaAtivaId, onSuccess, onCance
 }) {
   const { toast } = useToast()
   const [insumoId, setInsumoId] = useState("")
+  const [buscaItem, setBuscaItem] = useState("")
   const [quantidade, setQuantidade] = useState("")
   const [custoUnitario, setCustoUnitario] = useState("")
   const [observacao, setObservacao] = useState("")
   const [salvando, setSalvando] = useState(false)
 
   const insumoSel = insumos.find(i => i.id === insumoId)
+  const { opcoesInsumos, totalResultados } = useMemo(() => {
+    const termo = buscaItem.trim().toLocaleLowerCase("pt-BR")
+    const resultados = termo
+      ? insumos.filter(item =>
+          item.codigo.toLocaleLowerCase("pt-BR").includes(termo)
+          || item.descricao.toLocaleLowerCase("pt-BR").includes(termo)
+        )
+      : insumos
+
+    const opcoes = resultados.slice(0, 80)
+    if (insumoSel && !opcoes.some(item => item.id === insumoSel.id)) {
+      opcoes.unshift(insumoSel)
+    }
+
+    return { opcoesInsumos: opcoes, totalResultados: resultados.length }
+  }, [buscaItem, insumoSel, insumos])
 
   useEffect(() => {
     if (insumoSel) setCustoUnitario(insumoSel.preco_unitario.toString())
@@ -175,16 +192,37 @@ function ModalRecebimento({ insumos, localId, empresaAtivaId, onSuccess, onCance
         <div className="space-y-3">
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Item</label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="search"
+                value={buscaItem}
+                onChange={event => setBuscaItem(event.target.value)}
+                placeholder="Buscar por código ou descrição..."
+                autoComplete="off"
+                className="w-full h-11 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
+              />
+            </div>
             <Select value={insumoId || undefined} onValueChange={setInsumoId}>
               <SelectTrigger className="w-full h-11 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all">
                 <SelectValue placeholder="Selecione o item" />
               </SelectTrigger>
               <SelectContent position="popper" className="z-[9999] max-h-[40vh] overflow-y-auto">
-                {insumos.map(i => (
+                {opcoesInsumos.map(i => (
                   <SelectItem key={i.id} value={i.id}>{i.codigo} - {i.descricao}</SelectItem>
                 ))}
+                {opcoesInsumos.length === 0 && (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    Nenhum item encontrado.
+                  </div>
+                )}
               </SelectContent>
             </Select>
+            <p className="text-[10px] text-muted-foreground">
+              {totalResultados > 80
+                ? `Exibindo 80 de ${formatNum(totalResultados, 0)} resultados. Refine a busca para localizar o item.`
+                : `${formatNum(totalResultados, 0)} ${totalResultados === 1 ? "item encontrado" : "itens encontrados"}.`}
+            </p>
           </div>
 
           {insumoSel && (
