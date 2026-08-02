@@ -483,46 +483,36 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       }
 
       setLoadingTrabalhos(true)
-      const { data: vinculos, error: erroVinculos } = await supabase
-        .from("operacao_postos_trabalho")
-        .select("operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(produto_id)")
-        .eq("empresa_id", empresaAtivaId)
-        .eq("maquina_id", postoSelecionadoId)
-        .eq("ativo", true)
+      const codigos = new Set<string>()
+      const tamanhoPagina = 1000
 
-      if (cancelado) return
-      if (erroVinculos) {
-        setCodigosDisponiveisNoPosto(new Set())
-        setLoadingTrabalhos(false)
-        toast({ title: "Falha ao carregar trabalhos do posto", description: erroVinculos.message, variant: "destructive" })
-        return
+      for (let inicio = 0; ; inicio += tamanhoPagina) {
+        const { data: vinculos, error: erroVinculos } = await supabase
+          .from("operacao_postos_trabalho")
+          .select("operacao:operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(produto:produtos!operacoes_produto_id_fkey!inner(codigo))")
+          .eq("empresa_id", empresaAtivaId)
+          .eq("maquina_id", postoSelecionadoId)
+          .eq("ativo", true)
+          .order("operacao_id", { ascending: true })
+          .range(inicio, inicio + tamanhoPagina - 1)
+
+        if (cancelado) return
+        if (erroVinculos) {
+          setCodigosDisponiveisNoPosto(new Set())
+          setLoadingTrabalhos(false)
+          toast({ title: "Falha ao carregar trabalhos do posto", description: erroVinculos.message, variant: "destructive" })
+          return
+        }
+
+        for (const vinculo of vinculos || []) {
+          const codigo = (vinculo as any).operacao?.produto?.codigo
+          if (codigo) codigos.add(codigo)
+        }
+
+        if ((vinculos || []).length < tamanhoPagina) break
       }
 
-      const produtoIds = Array.from(new Set(
-        (vinculos || [])
-          .map((vinculo: any) => vinculo.operacoes?.produto_id)
-          .filter(Boolean),
-      )) as string[]
-
-      if (produtoIds.length === 0) {
-        setCodigosDisponiveisNoPosto(new Set())
-        setLoadingTrabalhos(false)
-        return
-      }
-
-      const { data: produtosDoPosto, error: erroProdutos } = await supabase
-        .from("produtos")
-        .select("codigo")
-        .eq("empresa_id", empresaAtivaId)
-        .in("id", produtoIds)
-
-      if (cancelado) return
-      if (erroProdutos) {
-        setCodigosDisponiveisNoPosto(new Set())
-        toast({ title: "Falha ao identificar produtos do posto", description: erroProdutos.message, variant: "destructive" })
-      } else {
-        setCodigosDisponiveisNoPosto(new Set((produtosDoPosto || []).map(produto => produto.codigo)))
-      }
+      setCodigosDisponiveisNoPosto(codigos)
       setLoadingTrabalhos(false)
     }
 
