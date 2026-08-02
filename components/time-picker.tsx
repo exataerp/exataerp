@@ -1,7 +1,8 @@
 "use client"
 
-import React, { useState, useRef, useEffect } from "react"
+import React, { useState } from "react"
 import { Clock } from "lucide-react"
+import * as PopoverPrimitive from "@radix-ui/react-popover"
 
 interface TimePickerProps {
   value: string // "HH:MM"
@@ -15,16 +16,7 @@ const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "
 
 export function TimePicker({ value, onChange, className = "", placeholder = "--:--" }: TimePickerProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   const [hh, mm] = value ? value.split(":") : ["", ""]
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [])
 
   function setHora(h: string) {
     onChange(`${h}:${mm || "00"}`)
@@ -34,20 +26,28 @@ export function TimePicker({ value, onChange, className = "", placeholder = "--:
   }
 
   return (
-    <div className={`relative ${className}`} ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="w-full h-10 px-3 flex items-center justify-between rounded-md border border-border bg-input text-sm text-foreground hover:border-primary/50 transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
-      >
-        <span className={value ? "text-foreground tabular-nums" : "text-muted-foreground"}>
-          {value || placeholder}
-        </span>
-        <Clock className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-      </button>
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <div className={className}>
+        <PopoverPrimitive.Trigger asChild>
+          <button
+            type="button"
+            className="flex h-10 w-full items-center justify-between rounded-md border border-border bg-input px-3 text-sm text-foreground transition-colors hover:border-primary/50 focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <span className={value ? "text-foreground tabular-nums" : "text-muted-foreground"}>
+              {value || placeholder}
+            </span>
+            <Clock className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+          </button>
+        </PopoverPrimitive.Trigger>
+      </div>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-40 rounded-xl border border-border bg-card shadow-xl p-2">
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          align="start"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[100] w-40 rounded-xl border border-border bg-card p-2 shadow-xl outline-none"
+        >
           <div className="flex items-center justify-between px-1 pb-1.5 mb-1.5 border-b border-border">
             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Hora</span>
             <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Min</span>
@@ -96,8 +96,8 @@ export function TimePicker({ value, onChange, className = "", placeholder = "--:
               OK
             </button>
           </div>
-        </div>
-      )}
-    </div>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   )
 }
