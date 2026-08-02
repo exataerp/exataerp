@@ -380,6 +380,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [justificativaOverride, setJustificativaOverride] = useState("")
   const [acaoOverride, setAcaoOverride] = useState<"iniciar" | "retomar" | null>(null)
   const [processandoOverride, setProcessandoOverride] = useState(false)
+  const [iniciandoApontamento, setIniciandoApontamento] = useState(false)
+  const iniciandoApontamentoRef = useRef(false)
+  const sincronizandoIntervaloRef = useRef(false)
+  const erroSincronizacaoIntervaloRef = useRef(false)
 
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
@@ -593,6 +597,90 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     }
   }, [empresaAtivaId, loadData])
 
+  // O pg_cron continua sendo a garantia para telas fechadas. Enquanto o
+  // operador está nesta tela, esta sincronização autenticada reduz a pausa
+  // automática para poucos segundos e evita depender somente do job por minuto.
+  const apontamentoAtivoId = sessoes[0]?.apontamentoId
+  useEffect(() => {
+    if (!empresaAtivaId || !apontamentoAtivoId || apontamentoAtivoId.startsWith("pendente-")) return
+
+    let cancelado = false
+    const sincronizar = async () => {
+      if (sincronizandoIntervaloRef.current) return
+      sincronizandoIntervaloRef.current = true
+
+      try {
+        const { data, error } = await supabase.rpc("sincronizar_intervalo_programado_apontamento", {
+          p_empresa_id: empresaAtivaId,
+          p_apontamento_id: apontamentoAtivoId,
+        })
+
+        if (cancelado) return
+        if (error) {
+          if (!erroSincronizacaoIntervaloRef.current) {
+            console.error("Falha ao sincronizar intervalo programado:", error)
+            erroSincronizacaoIntervaloRef.current = true
+          }
+          return
+        }
+
+        erroSincronizacaoIntervaloRef.current = false
+        const resultado = data as {
+          alterado?: boolean
+          estado?: SessaoAtiva["estadoOperacao"]
+          total_segundos?: number
+          intervalo_inicio?: string
+          intervalo_fim?: string
+          intervalo_nome?: string
+        } | null
+
+        if (resultado?.alterado) {
+          const totalSegundos = Math.max(0, Number(resultado.total_segundos) || 0)
+          setSessoes(atuais => atuais.map(sessao => {
+            if (sessao.apontamentoId !== apontamentoAtivoId) return sessao
+            const inicioIntervalo = resultado.intervalo_inicio
+              ? new Date(resultado.intervalo_inicio).getTime()
+              : sessao.pausaInicioTimestamp ?? Date.now()
+
+            return {
+              ...sessao,
+              estadoOperacao: resultado.estado,
+              segundosAcumulados: totalSegundos,
+              milissegundosAcumulados: totalSegundos * MILISSEGUNDOS_POR_SEGUNDO,
+              pausaInicioTimestamp: inicioIntervalo,
+              intervaloNome: resultado.intervalo_nome ?? sessao.intervaloNome,
+              intervaloInicioTimestamp: resultado.intervalo_inicio
+                ? new Date(resultado.intervalo_inicio).getTime()
+                : sessao.intervaloInicioTimestamp,
+              intervaloFimTimestamp: resultado.intervalo_fim
+                ? new Date(resultado.intervalo_fim).getTime()
+                : sessao.intervaloFimTimestamp,
+            }
+          }))
+          setSegundosMap(atual => ({ ...atual, [apontamentoAtivoId]: totalSegundos }))
+          void loadData(true)
+        }
+      } finally {
+        sincronizandoIntervaloRef.current = false
+      }
+    }
+
+    void sincronizar()
+    const interval = window.setInterval(() => { void sincronizar() }, 1_000)
+    const sincronizarAoVoltar = () => {
+      if (document.visibilityState === "visible") void sincronizar()
+    }
+    window.addEventListener("focus", sincronizarAoVoltar)
+    document.addEventListener("visibilitychange", sincronizarAoVoltar)
+
+    return () => {
+      cancelado = true
+      window.clearInterval(interval)
+      window.removeEventListener("focus", sincronizarAoVoltar)
+      document.removeEventListener("visibilitychange", sincronizarAoVoltar)
+    }
+  }, [apontamentoAtivoId, empresaAtivaId, loadData])
+
   // Cronômetro — atualiza o tempo decorrido de todas as sessões ativas a cada segundo
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
@@ -752,6 +840,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     overrideIntervalo = false,
     justificativa?: string,
   ) => {
+    if (iniciandoApontamentoRef.current) return
+
     if (!ordemSelecionadaId || !operacaoId || !postoSelecionadoId) {
       toast({ title: "Selecione a OP e a operação", variant: "destructive" })
       return
@@ -783,81 +873,105 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       return
     }
 
-    if (sessoes.length > 0 || sessoes.some(s => s.operacaoId === operacaoId)) {
+    if (sessoes.length > 0) {
       toast({ title: "Já existe um apontamento ativo", description: "Finalize o apontamento atual antes de iniciar outra operação.", variant: "destructive" })
       return
     }
 
-    // Busca tempo planejado e máquina da operação no banco
-    // O cronometro comeca no clique. A latencia das consultas abaixo nao pode
-    // virar um atraso permanente em relacao ao tempo real da operacao.
     const inicioSolicitadoTimestamp = Date.now()
-
-    const { data: opDb } = await supabase
-      .from("operacoes")
-      .select("tempo, unidade, maquina_id")
-      .eq("id", operacaoId)
-      .single()
-
-    const cicloPlanejadoSeg = opDb
-      ? (opDb.unidade === "minutes" ? opDb.tempo * 60 : opDb.tempo)
-      : undefined
-
     const maquinaIdDefinitiva = postoSelecionadoId
-    const { data, error } = await supabase.rpc("iniciar_apontamento_no_posto", {
-      p_empresa_id: empresaAtivaId,
-      p_ordem_id: ordemSelecionadaId,
-      p_operacao_id: operacaoId,
-      p_maquina_id: postoSelecionadoId,
-      p_override: overrideIntervalo,
-      p_justificativa: justificativa || null,
-    })
-
-    if (error) {
-      const ehBloqueioIntervalo = error.message.includes("intervalo programado")
-      if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
-        setAcaoOverride("iniciar")
-        setJustificativaOverride("")
-        setShowOverrideIntervalo(true)
-      }
-      toast({
-        title: ehBloqueioIntervalo ? "Intervalo programado em andamento" : "Erro ao iniciar",
-        description: error.message,
-        variant: "destructive",
-      })
-      return
-    }
-
-    const ordemAtualizada = { id: ordemSelecionadaId, status: "em_andamento" }
-
-    const novaSessao: SessaoAtiva = {
-      apontamentoId: data.id,
+    const sessaoPendente: SessaoAtiva = {
+      apontamentoId: `pendente-${inicioSolicitadoTimestamp}`,
       ordemId: ordemSelecionadaId,
       operacaoId,
       operacaoNome: op.nome,
       maquinaId: maquinaIdDefinitiva ?? undefined,
       maquinaNome: postos.find(p => p.id === postoSelecionadoId)?.nome ?? "Posto de trabalho",
-      inicioTimestamp: data.cronometro_inicio ? new Date(data.cronometro_inicio).getTime() : inicioSolicitadoTimestamp,
+      inicioTimestamp: inicioSolicitadoTimestamp,
       segundosAcumulados: 0,
       milissegundosAcumulados: 0,
-      cicloPlanejadoSeg,
       estadoOperacao: "em_execucao",
     }
-    setApontamentos((atuais) => [data as Apontamento, ...atuais])
-    if (ordemAtualizada) {
+
+    iniciandoApontamentoRef.current = true
+    setIniciandoApontamento(true)
+    setSessoes([sessaoPendente])
+
+    try {
+      // A criação no banco e a busca do ciclo partem juntas. A sessão pendente
+      // acima faz o cronômetro aparecer no mesmo clique, sem esperar a rede.
+      const [opResult, inicioResult] = await Promise.all([
+        supabase
+          .from("operacoes")
+          .select("tempo, unidade")
+          .eq("id", operacaoId)
+          .single(),
+        supabase.rpc("iniciar_apontamento_no_posto", {
+          p_empresa_id: empresaAtivaId,
+          p_ordem_id: ordemSelecionadaId,
+          p_operacao_id: operacaoId,
+          p_maquina_id: postoSelecionadoId,
+          p_override: overrideIntervalo,
+          p_justificativa: justificativa || null,
+        }),
+      ])
+
+      const { data, error } = inicioResult
+      if (error) {
+        setSessoes([])
+        setSegundosMap({})
+        const ehBloqueioIntervalo = error.message.includes("intervalo programado")
+        if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
+          setAcaoOverride("iniciar")
+          setJustificativaOverride("")
+          setShowOverrideIntervalo(true)
+        }
+        toast({
+          title: ehBloqueioIntervalo ? "Intervalo programado em andamento" : "Erro ao iniciar",
+          description: error.message,
+          variant: "destructive",
+        })
+        return
+      }
+
+      const opDb = opResult.data
+      const cicloPlanejadoSeg = opDb
+        ? Number(opDb.tempo) * (opDb.unidade === "minutes" ? 60 : opDb.unidade === "hours" ? 3600 : 1)
+        : undefined
+      const novaSessao: SessaoAtiva = {
+        ...sessaoPendente,
+        apontamentoId: data.id,
+        inicioTimestamp: data.cronometro_inicio
+          ? new Date(data.cronometro_inicio).getTime()
+          : inicioSolicitadoTimestamp,
+        cicloPlanejadoSeg,
+      }
+
+      setApontamentos((atuais) => [data as Apontamento, ...atuais])
       setOrdens((atuais) => atuais.map((ordem) =>
         ordem.id === ordemSelecionadaId
-          ? { ...ordem, status: ordemAtualizada.status }
+          ? { ...ordem, status: "em_andamento" }
           : ordem,
       ))
+      salvarSessoes([novaSessao])
+      setOrdemSelecionadaId(novaSessao.ordemId)
+      setOperacaoSelecionadaId(novaSessao.operacaoId)
+      toast({
+        title: "Apontamento iniciado",
+        description: op.nome,
+      })
+    } catch (error) {
+      setSessoes([])
+      setSegundosMap({})
+      toast({
+        title: "Erro ao iniciar",
+        description: error instanceof Error ? error.message : "Não foi possível iniciar o apontamento.",
+        variant: "destructive",
+      })
+    } finally {
+      iniciandoApontamentoRef.current = false
+      setIniciandoApontamento(false)
     }
-    salvarSessoes([...sessoes, novaSessao])
-    setOrdemSelecionadaId(novaSessao.ordemId)
-    setOperacaoSelecionadaId(novaSessao.operacaoId)
-    toast({
-      title: "Apontamento iniciado",
-      description: op.nome,
-    })
   }
 
   // ─── Pausar ────────────────────────────────────────────────────────────────
@@ -1301,7 +1415,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const percentualRitmo = cicloAtivo && cicloAtivo > 0
     ? (tempoNoCicloAtual / cicloAtivo) * 100
     : null
-  const ritmo = pausaIntervaloProgramado
+  const ritmo = iniciandoApontamento
+    ? { label: "Iniciando operação", detalhe: "Cronômetro iniciado", cor: "#22c55e", texto: "text-green-600" }
+    : pausaIntervaloProgramado
     ? { label: "Pausada — intervalo programado", detalhe: "Pausa automática do sistema", cor: "#f59e0b", texto: "text-amber-500" }
     : aguardandoRetomada
       ? { label: "Aguardando retomada", detalhe: "Confirmação do operador necessária", cor: "#3b82f6", texto: "text-blue-500" }
@@ -1527,7 +1643,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           {sessaoAtiva && (
             <div className={"inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold " + (sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-600" : "border-green-500/25 bg-green-500/10 text-green-600")}>
               <span className={"h-2 w-2 rounded-full " + (sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500")} />
-              {sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
+              {iniciandoApontamento ? "Confirmando início" : sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
             </div>
           )}
         </header>
@@ -1929,20 +2045,22 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           ) : (
                             <button
                               type="button"
+                              disabled={iniciandoApontamento}
                               onClick={() => {
+                                if (iniciandoApontamento) return
                                 setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
                                 grupos.length > 0
                                   ? setShowModalPausa(true)
                                   : toast({ title: "Cadastre exceções primeiro", description: "Vá em Exceções e crie grupos de parada.", variant: "destructive" })
                               }}
-                              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-black text-white transition-colors hover:bg-amber-400"
+                              className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-black text-white transition-colors hover:bg-amber-400 disabled:cursor-wait disabled:opacity-40"
                             >
-                              <Pause className="h-5 w-5" /> Pausar operação
+                              <Pause className="h-5 w-5" /> {iniciandoApontamento ? "Confirmando início..." : "Pausar operação"}
                             </button>
                           )}
                           <button
                             type="button"
-                            disabled={pausaIntervaloProgramado || aguardandoRetomada}
+                            disabled={iniciandoApontamento || pausaIntervaloProgramado || aguardandoRetomada}
                             onClick={() => {
                               setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
                               setShowModalFinalizar(true)
