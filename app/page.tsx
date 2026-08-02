@@ -22,7 +22,7 @@ import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users
+  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users, ShieldCheck
 } from "lucide-react"
 
 type TabId = AbaId
@@ -79,6 +79,7 @@ export default function ExataApp() {
   const [mobileOpen,   setMobileOpen]   = useState(false)
   const [mounted,      setMounted]      = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
+  const [isSendingPasswordReset, setIsSendingPasswordReset] = useState(false)
   const [showAlertas,  setShowAlertas]  = useState(false)
   const [alertas,      setAlertas]      = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
   const canAccessActiveTab = visibleTabs.includes(activeTab)
@@ -235,6 +236,30 @@ export default function ExataApp() {
       })
       setIsSigningOut(false)
     }
+  }
+
+  const handleResetPassword = async () => {
+    if (!userEmail || isSendingPasswordReset) return
+
+    setIsSendingPasswordReset(true)
+    const { error } = await supabase.auth.resetPasswordForEmail(userEmail.toLowerCase(), {
+      redirectTo: `${window.location.origin}/recuperar-senha`,
+    })
+    setIsSendingPasswordReset(false)
+
+    if (error) {
+      toast({
+        title: "Não foi possível enviar o link",
+        description: error.message,
+        variant: "destructive",
+      })
+      return
+    }
+
+    toast({
+      title: "Link de redefinição enviado",
+      description: `Confira a caixa de entrada de ${userEmail}.`,
+    })
   }
 
 
@@ -1115,8 +1140,17 @@ export default function ExataApp() {
                         />
                       </div>
                       <p className="text-[10px] leading-relaxed text-muted-foreground">
-                        As credenciais são somente para consulta. A senha permanece protegida e não pode ser visualizada ou alterada nesta tela.
+                        As credenciais são somente para consulta. Para trocar a senha, enviaremos um link seguro ao e-mail cadastrado.
                       </p>
+                      <button
+                        type="button"
+                        onClick={handleResetPassword}
+                        disabled={!userEmail || isSendingPasswordReset}
+                        className="w-full h-11 flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold uppercase tracking-widest text-[11px] rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        {isSendingPasswordReset ? "Enviando link..." : "Redefinir senha"}
+                      </button>
                     </div>
                   </div>
 
@@ -1175,7 +1209,7 @@ export default function ExataApp() {
                         { title: "Manutenção", desc: "Gerencie ordens de serviço corretivas e preventivas por ativo. Status atualizável diretamente na lista." },
                         { title: "Relatórios", desc: "OEE por máquina, refugo por produto, ciclo real vs planejado, consumo de materiais e ranking de paradas. Filtros por período." },
                         { title: "Dashboard", desc: "Visão em tempo real: status das máquinas, OPs em andamento com progresso, estoque crítico e produção por máquina. Auto-refresh a cada 2 minutos." },
-                        { title: "Credenciais de Acesso", desc: "O e-mail identifica o usuário no login. A senha permanece mascarada e não pode ser alterada nas configurações." },
+                        { title: "Credenciais de Acesso", desc: "O e-mail identifica o usuário no login. Para trocar a senha, solicite um link seguro de redefinição nas configurações." },
                       ].map(({ title, desc }) => (
                         <div key={title} className="space-y-1 border-l-2 border-primary/30 pl-3">
                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{title}</p>
