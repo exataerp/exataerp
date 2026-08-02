@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useMemo } from "react"
+import { createPortal } from "react-dom"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { CountUp } from "@/components/count-up"
@@ -93,6 +94,12 @@ function formatBRL(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 }
 
+function renderModalPortal(children: React.ReactNode) {
+  if (typeof document === "undefined") return null
+
+  return createPortal(children, document.body)
+}
+
 function ModalRecebimento({ insumos, localId, empresaAtivaId, onSuccess, onCancel }: {
   insumos: Insumo[]
   localId: string
@@ -179,8 +186,8 @@ function ModalRecebimento({ insumos, localId, empresaAtivaId, onSuccess, onCance
     onSuccess()
   }
 
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+  return renderModalPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-foreground">Recebimento de Material</h3>
@@ -281,7 +288,7 @@ function ModalRecebimento({ insumos, localId, empresaAtivaId, onSuccess, onCance
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   )
 }
 
@@ -339,8 +346,8 @@ function ModalAjuste({ insumos, localId, empresaAtivaId, saldos, onSuccess, onCa
     onSuccess()
   }
 
-  return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+  return renderModalPortal(
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-foreground">Ajuste de Inventário</h3>
@@ -418,7 +425,7 @@ function ModalAjuste({ insumos, localId, empresaAtivaId, saldos, onSuccess, onCa
           </button>
         </div>
       </div>
-    </div>
+    </div>,
   )
 }
 
