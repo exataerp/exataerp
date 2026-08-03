@@ -191,11 +191,20 @@ const APPLE_CHART_COLORS = {
   gray: "rgb(var(--chart-system-gray))",
 } as const
 
+const OEE_COLOR_THRESHOLD = 50
+
+const OEE_CHART_COLORS = {
+  disponibilidade: "hsl(var(--chart-oee-blue-dark))",
+  performance: "hsl(var(--chart-oee-blue))",
+  qualidade: "hsl(var(--chart-oee-blue-light))",
+} as const
+
 const OEE_LEGEND_ITEMS = [
-  { label: "Disponibilidade", color: APPLE_CHART_COLORS.blue },
-  { label: "OEE", color: APPLE_CHART_COLORS.gray },
-  { label: "Performance", color: APPLE_CHART_COLORS.teal },
-  { label: "Qualidade", color: APPLE_CHART_COLORS.green },
+  { label: "Disponibilidade", color: OEE_CHART_COLORS.disponibilidade },
+  { label: "Performance", color: OEE_CHART_COLORS.performance },
+  { label: "Qualidade", color: OEE_CHART_COLORS.qualidade },
+  { label: `OEE ≥ ${OEE_COLOR_THRESHOLD}%`, color: APPLE_CHART_COLORS.green },
+  { label: `OEE < ${OEE_COLOR_THRESHOLD}%`, color: APPLE_CHART_COLORS.red },
 ] as const
 
 const REFUGO_LEGEND_ITEMS = [
@@ -826,7 +835,7 @@ export function RelatoriosTab({
       {/* KPIs gerais */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "OEE médio geral", value: kpis.oeeGeral, hasBase: kpis.temBaseOEE, decimals: 1, suffix: "%", icon: BarChart3, color: !kpis.temBaseOEE ? "text-muted-foreground" : kpis.oeeGeral >= 85 ? "text-green-600" : kpis.oeeGeral >= 60 ? "text-amber-500" : "text-destructive" },
+          { label: "OEE médio geral", value: kpis.oeeGeral, hasBase: kpis.temBaseOEE, decimals: 1, suffix: "%", icon: BarChart3, color: !kpis.temBaseOEE ? "text-muted-foreground" : kpis.oeeGeral >= OEE_COLOR_THRESHOLD ? "text-green-600" : "text-destructive" },
           { label: "Peças acabadas", value: kpis.totalProduzidas, hasBase: true, decimals: 0, suffix: "", icon: TrendingUp, color: "text-primary" },
           { label: "Taxa de refugo", value: kpis.taxaRefugo, hasBase: kpis.temBaseRefugo, decimals: 1, suffix: "%", icon: AlertTriangle, color: !kpis.temBaseRefugo ? "text-muted-foreground" : "text-destructive" },
         ].map(({ label, value, hasBase, decimals, suffix, icon: Icon, color }) => (
@@ -885,7 +894,7 @@ export function RelatoriosTab({
               )}
               <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
                 <h3 className="text-sm font-bold text-foreground mb-1">OEE por Máquina</h3>
-                <p className="text-[11px] text-muted-foreground mb-5">Meta de classe mundial: 85%</p>
+                <p className="text-[11px] text-muted-foreground mb-5">OEE verde a partir de {OEE_COLOR_THRESHOLD}% e vermelho abaixo de {OEE_COLOR_THRESHOLD}%</p>
                 <ResponsiveContainer width="100%" height={308}>
                   <BarChart data={dadosOEE} barCategoryGap="42%" barGap={8}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
@@ -899,10 +908,17 @@ export function RelatoriosTab({
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} unit="%" />
                     <Tooltip cursor={false} content={<ChartTooltip />} />
                     <Legend content={<LegendaOEE />} />
-                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={APPLE_CHART_COLORS.blue} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="performance" name="Performance" fill={APPLE_CHART_COLORS.teal} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="qualidade" name="Qualidade" fill={APPLE_CHART_COLORS.green} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
-                    <Bar dataKey="oee" name="OEE" fill={APPLE_CHART_COLORS.gray} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="disponibilidade" name="Disponibilidade" fill={OEE_CHART_COLORS.disponibilidade} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="performance" name="Performance" fill={OEE_CHART_COLORS.performance} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="qualidade" name="Qualidade" fill={OEE_CHART_COLORS.qualidade} barSize={30} radius={[8, 8, 4, 4]} unit="%" />
+                    <Bar dataKey="oee" name="OEE" barSize={30} radius={[8, 8, 4, 4]} unit="%">
+                      {dadosOEE.map(d => (
+                        <Cell
+                          key={`oee-${d.maquina}`}
+                          fill={d.oee >= OEE_COLOR_THRESHOLD ? APPLE_CHART_COLORS.green : APPLE_CHART_COLORS.red}
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -928,7 +944,7 @@ export function RelatoriosTab({
                         <td className="px-4 py-3 text-xs">{formatNum(d.qualidade)}%</td>
                         <td className="px-4 py-3">
                           {d.oeeCalculavel ? (
-                            <span className={`text-xs font-bold ${d.oee >= 85 ? "text-green-600" : d.oee >= 60 ? "text-amber-500" : "text-destructive"}`}>
+                            <span className={`text-xs font-bold ${d.oee >= OEE_COLOR_THRESHOLD ? "text-green-600" : "text-destructive"}`}>
                               {formatNum(d.oee)}%
                             </span>
                           ) : <span className="text-xs text-muted-foreground">N/A</span>}
