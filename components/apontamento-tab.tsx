@@ -9,6 +9,7 @@ import { podeIniciarMultiplosApontamentos } from "@/lib/permissions"
 import { isPausaProgramada } from "@/components/relatorios-tab"
 import { temPermissaoOverrideIntervalo } from "@/lib/scheduled-break-policy"
 import { isValidOperationalEntry } from "@/lib/audit"
+import { resolverOperacaoSelecionada } from "@/lib/apontamento-selection"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, ClipboardList, CheckCircle2, Clock,
@@ -381,6 +382,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   // Sessões ativas (pode ter mais de uma rodando ao mesmo tempo, uma por operação/máquina)
   const [sessoes, setSessoes] = useState<SessaoAtiva[]>([])
+  const sessoesRef = useRef<SessaoAtiva[]>([])
   const [segundosMap, setSegundosMap] = useState<Record<string, number>>({})
   const [eventosOrdem, setEventosOrdem] = useState<EventoOrdem[]>([])
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -406,6 +408,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   // ─── Carga inicial ─────────────────────────────────────────────────────────
 
   const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    sessoesRef.current = sessoes
+  }, [sessoes])
 
   const loadData = useCallback(async (silent = false) => {
     const versaoSessoesAoIniciar = versaoSessoesRef.current
@@ -866,48 +872,72 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   // ─── Carrega operações ao selecionar OP ────────────────────────────────────
 
   useEffect(() => {
-    if (!ordemSelecionadaId || !postoSelecionadoId) { setOperacoes([]); setOperacaoSelecionadaId(""); return }
-    const ordem = ordens.find(o => o.id === ordemSelecionadaId)
-    if (!ordem) return
-    setLoadingOps(true)
+    let cancelado = false
 
-    supabase
-      .from("produtos")
-      .select("id")
-      .eq("codigo", ordem.produto_codigo)
-      .eq("empresa_id", empresaAtivaId!)
-      .single()
-      .then(({ data: prod }) => {
-        if (!prod) { setOperacoes([]); setLoadingOps(false); return }
-        supabase
+    if (!ordemSelecionadaId || !postoSelecionadoId) {
+      setOperacoes([])
+      setOperacaoSelecionadaId("")
+      setLoadingOps(false)
+      return () => { cancelado = true }
+    }
+
+    const ordem = ordens.find(o => o.id === ordemSelecionadaId)
+    if (!ordem) return () => { cancelado = true }
+
+    const carregarOperacoes = async () => {
+      setLoadingOps(true)
+
+      try {
+        const { data: produto } = await supabase
+          .from("produtos")
+          .select("id")
+          .eq("codigo", ordem.produto_codigo)
+          .eq("empresa_id", empresaAtivaId!)
+          .single()
+
+        if (cancelado) return
+        if (!produto) {
+          setOperacoes([])
+          return
+        }
+
+        const { data: operacoesDoPosto, error } = await supabase
           .from("operacao_postos_trabalho")
           .select("operacao_id, operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(id, nome, maquina_id, ordem, produto_id)")
           .eq("empresa_id", empresaAtivaId!)
           .eq("maquina_id", postoSelecionadoId)
           .eq("ativo", true)
-          .eq("operacoes.produto_id", prod.id)
+          .eq("operacoes.produto_id", produto.id)
           .order("ordem", { foreignTable: "operacoes" })
-          .then(({ data: ops, error }) => {
-            if (error) {
-              toast({ title: "Falha ao carregar operações", description: error.message, variant: "destructive" })
-              setOperacoes([])
-              setLoadingOps(false)
-              return
-            }
-            const formatted: Operacao[] = (ops || []).map((o: any) => ({
-              id: o.operacoes.id,
-              nome: o.operacoes.nome,
-              maquina_id: o.operacoes.maquina_id,
-              ordem: o.operacoes.ordem,
-            }))
-            setOperacoes(formatted)
-            setOperacaoSelecionadaId((operacaoAtual) => {
-              if (formatted.some(operacao => operacao.id === operacaoAtual)) return operacaoAtual
-              return formatted.length === 1 ? formatted[0].id : ""
-            })
-            setLoadingOps(false)
-          })
-      })
+
+        if (cancelado) return
+        if (error) {
+          toast({ title: "Falha ao carregar operações", description: error.message, variant: "destructive" })
+          setOperacoes([])
+          return
+        }
+
+        const operacoesFormatadas: Operacao[] = (operacoesDoPosto || []).map((item: any) => ({
+          id: item.operacoes.id,
+          nome: item.operacoes.nome,
+          maquina_id: item.operacoes.maquina_id,
+          ordem: item.operacoes.ordem,
+        }))
+
+        setOperacoes(operacoesFormatadas)
+        setOperacaoSelecionadaId(operacaoAtualId => resolverOperacaoSelecionada({
+          operacaoAtualId,
+          ordemSelecionadaId,
+          operacoesDisponiveisIds: operacoesFormatadas.map(operacao => operacao.id),
+          sessoesAtivas: sessoesRef.current,
+        }))
+      } finally {
+        if (!cancelado) setLoadingOps(false)
+      }
+    }
+
+    void carregarOperacoes()
+    return () => { cancelado = true }
   }, [ordemSelecionadaId, postoSelecionadoId, empresaAtivaId, ordens, toast])
 
   // ─── Iniciar ───────────────────────────────────────────────────────────────
@@ -1415,6 +1445,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   const ordemAtual = ordens.find(o => o.id === ordemSelecionadaId)
 
+  const selecionarSessaoAtiva = (sessao: SessaoAtiva) => {
+    if (sessao.maquinaId) {
+      setPostoSelecionadoId(sessao.maquinaId)
+      if (empresaAtivaId) {
+        localStorage.setItem(`exata_posto_trabalho_${empresaAtivaId}`, sessao.maquinaId)
+      }
+    }
+    setOrdemSelecionadaId(sessao.ordemId)
+    setOperacaoSelecionadaId(sessao.operacaoId)
+    setBuscaOperacao("")
+  }
+
   const criarOSManutencao = async () => {
     const sessao = sessoes.find(s => s.apontamentoId === sessaoEmAcaoId)
     if (!sessao) return
@@ -1757,12 +1799,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                       <button
                         key={sessao.apontamentoId}
                         type="button"
-                        onClick={() => {
-                          if (sessao.maquinaId) setPostoSelecionadoId(sessao.maquinaId)
-                          setOrdemSelecionadaId(sessao.ordemId)
-                          setOperacaoSelecionadaId(sessao.operacaoId)
-                          setBuscaOperacao("")
-                        }}
+                        onClick={() => selecionarSessaoAtiva(sessao)}
                         className={"w-full rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " + (selecionada ? "border-primary bg-primary/5" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
                       >
                         <div className="flex items-center gap-3">
@@ -1986,7 +2023,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                                 type="button"
                                 onClick={() => {
                                   if (sessaoAtiva && !podeIniciarMultiplos) return
-                                  if (sessaoDaOperacao?.maquinaId) setPostoSelecionadoId(sessaoDaOperacao.maquinaId)
+                                  if (sessaoDaOperacao) {
+                                    selecionarSessaoAtiva(sessaoDaOperacao)
+                                    return
+                                  }
                                   setOperacaoSelecionadaId(operacao.id)
                                 }}
                                 disabled={!!sessaoAtiva && !podeIniciarMultiplos}
