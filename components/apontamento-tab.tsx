@@ -5,6 +5,7 @@ import { createPortal, flushSync } from "react-dom"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
+import { podeIniciarMultiplosApontamentos } from "@/lib/permissions"
 import { isPausaProgramada } from "@/components/relatorios-tab"
 import { temPermissaoOverrideIntervalo } from "@/lib/scheduled-break-policy"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -359,6 +360,7 @@ function ModalFinalizar({ onConfirm, onCancel, loading, isUltimaEtapa, maxProduz
 export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   const { toast } = useToast()
   const { session, supabaseUser } = useAuth()
+  const podeIniciarMultiplos = podeIniciarMultiplosApontamentos(session?.roles || [])
 
   const [ordens, setOrdens] = useState<OrdemProducao[]>([])
   const [apontamentos, setApontamentos] = useState<Apontamento[]>([])
@@ -645,9 +647,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   // O pg_cron continua sendo a garantia para telas fechadas. Enquanto o
   // operador está nesta tela, esta sincronização autenticada reduz a pausa
   // automática para poucos segundos e evita depender somente do job por minuto.
-  const apontamentoAtivoId = sessoes[0]?.apontamentoId
+  const apontamentosAtivosKey = sessoes
+    .map(sessao => sessao.apontamentoId)
+    .filter(apontamentoId => !apontamentoId.startsWith("pendente-"))
+    .join(",")
   useEffect(() => {
-    if (!empresaAtivaId || !apontamentoAtivoId || apontamentoAtivoId.startsWith("pendente-")) return
+    if (!empresaAtivaId || !apontamentosAtivosKey) return
+
+    const apontamentoIds = apontamentosAtivosKey.split(",")
 
     let cancelado = false
     const sincronizar = async () => {
@@ -659,74 +666,92 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         const accessToken = sessaoAuth.session?.access_token
         if (!accessToken) return
 
-        const resposta = await fetch("/api/apontamentos/sincronizar-intervalo", {
-          method: "POST",
-          cache: "no-store",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            empresaId: empresaAtivaId,
-            apontamentoId: apontamentoAtivoId,
-          }),
-        })
+        const respostas = await Promise.all(apontamentoIds.map(async apontamentoId => {
+          const resposta = await fetch("/api/apontamentos/sincronizar-intervalo", {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              empresaId: empresaAtivaId,
+              apontamentoId,
+            }),
+          })
+
+          if (!resposta.ok) {
+            return { apontamentoId, erro: await resposta.text(), resultado: null }
+          }
+
+          const resultado = await resposta.json() as {
+            alterado?: boolean
+            estado?: SessaoAtiva["estadoOperacao"]
+            total_segundos?: number
+            intervalo_inicio?: string
+            intervalo_fim?: string
+            intervalo_nome?: string
+          } | null
+          return { apontamentoId, erro: null, resultado }
+        }))
 
         if (cancelado || transicaoCronometroRef.current) return
-        if (!resposta.ok) {
+
+        const primeiraFalha = respostas.find(item => item.erro)
+        if (primeiraFalha) {
           if (!erroSincronizacaoIntervaloRef.current) {
-            console.error(
-              "Falha ao sincronizar intervalo programado:",
-              await resposta.text(),
-            )
+            console.error("Falha ao sincronizar intervalo programado:", primeiraFalha.erro)
             erroSincronizacaoIntervaloRef.current = true
           }
-          return
+        } else {
+          erroSincronizacaoIntervaloRef.current = false
         }
 
-        erroSincronizacaoIntervaloRef.current = false
-        const resultado = await resposta.json() as {
-          alterado?: boolean
-          estado?: SessaoAtiva["estadoOperacao"]
-          total_segundos?: number
-          intervalo_inicio?: string
-          intervalo_fim?: string
-          intervalo_nome?: string
-        } | null
+        const alteracoes = respostas.filter(item => item.resultado?.alterado)
+        if (alteracoes.length === 0) return
 
-        if (resultado?.alterado) {
+        const alteracoesPorId = new Map(alteracoes.map(item => [item.apontamentoId, item.resultado!]))
+        setSessoes(atuais => atuais.map(sessao => {
+          const resultado = alteracoesPorId.get(sessao.apontamentoId)
+          if (!resultado) return sessao
           const totalSegundos = Math.max(0, Number(resultado.total_segundos) || 0)
-          setSessoes(atuais => atuais.map(sessao => {
-            if (sessao.apontamentoId !== apontamentoAtivoId) return sessao
-            const inicioIntervalo = resultado.intervalo_inicio
-              ? new Date(resultado.intervalo_inicio).getTime()
-              : sessao.pausaInicioTimestamp ?? Date.now()
+          const inicioIntervalo = resultado.intervalo_inicio
+            ? new Date(resultado.intervalo_inicio).getTime()
+            : sessao.pausaInicioTimestamp ?? Date.now()
 
-            return {
-              ...sessao,
-              estadoOperacao: resultado.estado,
-              segundosAcumulados: totalSegundos,
-              milissegundosAcumulados: totalSegundos * MILISSEGUNDOS_POR_SEGUNDO,
-              pausaInicioTimestamp: inicioIntervalo,
-              intervaloNome: resultado.intervalo_nome ?? sessao.intervaloNome,
-              intervaloInicioTimestamp: resultado.intervalo_inicio
-                ? new Date(resultado.intervalo_inicio).getTime()
-                : sessao.intervaloInicioTimestamp,
-              intervaloFimTimestamp: resultado.intervalo_fim
-                ? new Date(resultado.intervalo_fim).getTime()
-                : sessao.intervaloFimTimestamp,
-            }
-          }))
-          setSegundosMap(atual => ({ ...atual, [apontamentoAtivoId]: totalSegundos }))
-          void loadData(true)
-        }
+          return {
+            ...sessao,
+            estadoOperacao: resultado.estado,
+            segundosAcumulados: totalSegundos,
+            milissegundosAcumulados: totalSegundos * MILISSEGUNDOS_POR_SEGUNDO,
+            pausaInicioTimestamp: inicioIntervalo,
+            intervaloNome: resultado.intervalo_nome ?? sessao.intervaloNome,
+            intervaloInicioTimestamp: resultado.intervalo_inicio
+              ? new Date(resultado.intervalo_inicio).getTime()
+              : sessao.intervaloInicioTimestamp,
+            intervaloFimTimestamp: resultado.intervalo_fim
+              ? new Date(resultado.intervalo_fim).getTime()
+              : sessao.intervaloFimTimestamp,
+          }
+        }))
+        setSegundosMap(atual => {
+          const atualizado = { ...atual }
+          for (const item of alteracoes) {
+            atualizado[item.apontamentoId] = Math.max(
+              0,
+              Number(item.resultado?.total_segundos) || 0,
+            )
+          }
+          return atualizado
+        })
+        void loadData(true)
       } finally {
         sincronizandoIntervaloRef.current = false
       }
     }
 
     void sincronizar()
-    const interval = window.setInterval(() => { void sincronizar() }, 1_000)
+    const interval = window.setInterval(() => { void sincronizar() }, 5_000)
     const sincronizarAoVoltar = () => {
       if (document.visibilityState === "visible") void sincronizar()
     }
@@ -739,7 +764,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       window.removeEventListener("focus", sincronizarAoVoltar)
       document.removeEventListener("visibilitychange", sincronizarAoVoltar)
     }
-  }, [apontamentoAtivoId, empresaAtivaId, loadData])
+  }, [apontamentosAtivosKey, empresaAtivaId, loadData])
 
   // Cronômetro — atualiza o tempo decorrido de todas as sessões ativas a cada segundo
   useEffect(() => {
@@ -787,12 +812,15 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   // Mantém a seleção visual sincronizada ao restaurar uma sessão ativa.
   useEffect(() => {
+    // Administradores/PCP podem limpar a seleção para escolher outro trabalho;
+    // as sessões abertas continuam disponíveis na lista lateral.
+    if (podeIniciarMultiplos) return
     const sessao = sessoes[0]
     if (!sessao) return
     if (sessao.maquinaId) setPostoSelecionadoId(sessao.maquinaId)
     setOrdemSelecionadaId(sessao.ordemId)
     setOperacaoSelecionadaId(sessao.operacaoId)
-  }, [sessoes])
+  }, [podeIniciarMultiplos, sessoes])
 
   // Descobre quais produtos possuem ao menos uma operação liberada no posto.
   // A fila lateral passa a mostrar somente trabalhos que o operador pode iniciar.
@@ -933,7 +961,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       return
     }
 
-    if (sessoes.length > 0) {
+    if (sessoes.length > 0 && !podeIniciarMultiplos) {
       toast({ title: "Já existe um apontamento ativo", description: "Finalize o apontamento atual antes de iniciar outra operação.", variant: "destructive" })
       return
     }
@@ -953,6 +981,16 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       milissegundosAcumulados: 0,
       estadoOperacao: "em_execucao",
     }
+    const sessoesAntesDoInicio = sessoes
+
+    const restaurarSessoesAnteriores = () => {
+      setSessoes(sessoesAntesDoInicio)
+      setSegundosMap(atual => {
+        const atualizado = { ...atual }
+        delete atualizado[sessaoPendente.apontamentoId]
+        return atualizado
+      })
+    }
 
     iniciandoApontamentoRef.current = true
     transicaoCronometroRef.current = true
@@ -961,8 +999,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     // painel e o 00:00 aparecem no mesmo clique, mesmo sob conexão lenta.
     flushSync(() => {
       setIniciandoApontamento(true)
-      setSegundosMap({ [sessaoPendente.apontamentoId]: 0 })
-      setSessoes([sessaoPendente])
+      setSegundosMap(atual => ({ ...atual, [sessaoPendente.apontamentoId]: 0 }))
+      setSessoes([...sessoesAntesDoInicio, sessaoPendente])
     })
 
     try {
@@ -986,8 +1024,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
       const { data, error } = inicioResult
       if (error) {
-        setSessoes([])
-        setSegundosMap({})
+        restaurarSessoesAnteriores()
         const ehBloqueioIntervalo = error.message.includes("intervalo programado")
         if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
           setAcaoOverride("iniciar")
@@ -1032,7 +1069,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           ? { ...ordem, status: "em_andamento" }
           : ordem,
       ))
-      salvarSessoes([novaSessao])
+      const sessoesAtualizadas = [...sessoesAntesDoInicio, novaSessao]
+      setSegundosMap(atual => {
+        const atualizado = { ...atual }
+        delete atualizado[sessaoPendente.apontamentoId]
+        atualizado[novaSessao.apontamentoId] = novaSessao.segundosAcumulados
+        return atualizado
+      })
+      salvarSessoes(sessoesAtualizadas)
       setOrdemSelecionadaId(novaSessao.ordemId)
       setOperacaoSelecionadaId(novaSessao.operacaoId)
       toast({
@@ -1040,8 +1084,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         description: op.nome,
       })
     } catch (error) {
-      setSessoes([])
-      setSegundosMap({})
+      restaurarSessoesAnteriores()
       toast({
         title: "Erro ao iniciar",
         description: error instanceof Error ? error.message : "Não foi possível iniciar o apontamento.",
@@ -1519,7 +1562,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     setSubgrupoParada(null)
   }
 
-  const sessaoAtiva = sessoes[0] ?? null
+  const sessaoSelecionada = sessoes.find(sessao =>
+    sessao.ordemId === ordemSelecionadaId
+    && sessao.operacaoId === operacaoSelecionadaId,
+  )
+  const sessaoAtiva = podeIniciarMultiplos
+    ? sessaoSelecionada ?? null
+    : sessoes[0] ?? null
   const postoAtual = postos.find(posto => posto.id === postoSelecionadoId)
   const ordemEmExibicao = sessaoAtiva
     ? ordens.find(ordem => ordem.id === sessaoAtiva.ordemId)
@@ -1540,19 +1589,20 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     return resumos
       .filter(resumo => {
         if (resumo.fechada) return false
-        const ehSessaoAtiva = resumo.op.id === sessaoAtiva?.ordemId
-        if (!ehSessaoAtiva && !codigosDisponiveisNoPosto.has(resumo.op.produto_codigo)) return false
+        const temSessaoAtiva = sessoes.some(sessao => sessao.ordemId === resumo.op.id)
+        if (!temSessaoAtiva && !codigosDisponiveisNoPosto.has(resumo.op.produto_codigo)) return false
         if (!termo) return true
         const descricao = mapaDescricaoProdutos[resumo.op.produto_codigo] || ""
         return [resumo.op.numero_op, resumo.op.produto_codigo, descricao]
           .some(valor => valor.toLowerCase().includes(termo))
       })
       .sort((a, b) => {
-        if (a.op.id === sessaoAtiva?.ordemId) return -1
-        if (b.op.id === sessaoAtiva?.ordemId) return 1
+        const aTemSessao = sessoes.some(sessao => sessao.ordemId === a.op.id)
+        const bTemSessao = sessoes.some(sessao => sessao.ordemId === b.op.id)
+        if (aTemSessao !== bTemSessao) return aTemSessao ? -1 : 1
         return (a.op.data_programacao || "").localeCompare(b.op.data_programacao || "")
       })
-  }, [resumos, buscaTrabalho, codigosDisponiveisNoPosto, mapaDescricaoProdutos, sessaoAtiva?.ordemId])
+  }, [resumos, buscaTrabalho, codigosDisponiveisNoPosto, mapaDescricaoProdutos, sessoes])
 
   const segundosAtivos = sessaoAtiva
     ? segundosMap[sessaoAtiva.apontamentoId] ?? sessaoAtiva.segundosAcumulados
@@ -1799,10 +1849,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
               {session?.user.nome || "Operador"}
             </p>
           </div>
-          {sessaoAtiva && (
-            <div className={"inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold " + (sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-600" : "border-green-500/25 bg-green-500/10 text-green-600")}>
-              <span className={"h-2 w-2 rounded-full " + (sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500")} />
-              {iniciandoApontamento ? "Confirmando início" : retomandoApontamentoId ? "Confirmando retomada" : sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
+          {sessoes.length > 0 && (
+            <div className={"inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold " + (sessaoAtiva && sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-600" : "border-green-500/25 bg-green-500/10 text-green-600")}>
+              <span className={"h-2 w-2 rounded-full " + (sessaoAtiva && sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500")} />
+              {iniciandoApontamento
+                ? "Confirmando início"
+                : retomandoApontamentoId
+                  ? "Confirmando retomada"
+                  : podeIniciarMultiplos && sessoes.length > 1
+                    ? `${sessoes.length} operações ativas`
+                    : sessaoAtiva && sessaoEmPausa
+                      ? "Operação pausada"
+                      : "Operação em andamento"}
             </div>
           )}
         </header>
@@ -1828,7 +1886,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                 <Select
                   value={postoSelecionadoId}
                   onValueChange={(valor) => {
-                    if (sessoes.length > 0) {
+                    if (sessoes.length > 0 && !podeIniciarMultiplos) {
                       toast({ title: "Posto bloqueado", description: "Finalize o apontamento atual antes de trocar de posto.", variant: "destructive" })
                       return
                     }
@@ -1838,7 +1896,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                     setBuscaTrabalho("")
                     localStorage.setItem("exata_posto_trabalho_" + empresaAtivaId, valor)
                   }}
-                  disabled={sessoes.length > 0}
+                  disabled={sessoes.length > 0 && !podeIniciarMultiplos}
                 >
                   <SelectTrigger className="h-14 w-full rounded-2xl border-border bg-muted/35 px-4 text-left text-sm font-bold text-foreground">
                     <SelectValue placeholder="Selecione seu posto" />
@@ -1863,6 +1921,55 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                 </div>
               )}
             </section>
+
+            {podeIniciarMultiplos && sessoes.length > 0 && (
+              <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+                <div className="flex items-center justify-between gap-3 border-b border-border p-4 sm:p-5">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">Operações ativas</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Selecione uma operação para acompanhar ou finalizar</p>
+                  </div>
+                  <span className="rounded-full bg-green-500/10 px-2.5 py-1 text-[10px] font-black text-green-600">
+                    {sessoes.length}
+                  </span>
+                </div>
+                <div className="space-y-2 p-3">
+                  {sessoes.map(sessao => {
+                    const selecionada = sessaoAtiva?.apontamentoId === sessao.apontamentoId
+                    const ordemSessao = ordens.find(ordem => ordem.id === sessao.ordemId)
+                    const postoSessao = postos.find(posto => posto.id === sessao.maquinaId)
+                    const pausada = !!sessao.pausaInicioTimestamp
+
+                    return (
+                      <button
+                        key={sessao.apontamentoId}
+                        type="button"
+                        onClick={() => {
+                          if (sessao.maquinaId) setPostoSelecionadoId(sessao.maquinaId)
+                          setOrdemSelecionadaId(sessao.ordemId)
+                          setOperacaoSelecionadaId(sessao.operacaoId)
+                          setBuscaOperacao("")
+                        }}
+                        className={"w-full rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " + (selecionada ? "border-primary bg-primary/5" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={"h-2.5 w-2.5 shrink-0 rounded-full " + (pausada ? "bg-amber-500" : "animate-pulse bg-green-500")} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-black text-foreground">{sessao.operacaoNome}</p>
+                            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                              {ordemSessao?.numero_op || "OP"} · {postoSessao?.codigo || sessao.maquinaNome}
+                            </p>
+                          </div>
+                          <span className="text-xs font-black tabular-nums text-foreground">
+                            {formatarTempo(segundosMap[sessao.apontamentoId] ?? sessao.segundosAcumulados)}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
 
             <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
               <div className="border-b border-border p-4 sm:p-5">
@@ -1911,7 +2018,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                 ) : (
                   trabalhosDisponiveis.map(resumo => {
                     const selecionado = ordemEmExibicao?.id === resumo.op.id
-                    const emExecucao = sessaoAtiva?.ordemId === resumo.op.id
+                    const emExecucao = sessoes.some(sessao => sessao.ordemId === resumo.op.id)
                     const descricao = mapaDescricaoProdutos[resumo.op.produto_codigo] || "Produto sem descrição"
                     const tituloOP = resumo.op.numero_op.toLowerCase().startsWith("op") ? resumo.op.numero_op : "OP " + resumo.op.numero_op
 
@@ -1920,12 +2027,14 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                         key={resumo.op.id}
                         type="button"
                         onClick={() => {
-                          if (sessaoAtiva && sessaoAtiva.ordemId !== resumo.op.id) {
+                          if (sessoes.length > 0 && !podeIniciarMultiplos && sessoes[0].ordemId !== resumo.op.id) {
                             toast({ title: "Operação em andamento", description: "Finalize o apontamento atual antes de selecionar outro trabalho.", variant: "destructive" })
                             return
                           }
+                          const sessaoDoTrabalho = sessoes.find(sessao => sessao.ordemId === resumo.op.id)
+                          if (sessaoDoTrabalho?.maquinaId) setPostoSelecionadoId(sessaoDoTrabalho.maquinaId)
                           setOrdemSelecionadaId(resumo.op.id)
-                          setOperacaoSelecionadaId("")
+                          setOperacaoSelecionadaId(sessaoDoTrabalho?.operacaoId || "")
                           setBuscaOperacao("")
                         }}
                         className={"group w-full rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " + (selecionado ? "border-primary bg-primary/5 shadow-sm shadow-primary/10" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
@@ -2054,12 +2163,20 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           .filter(operacao => operacao.nome.toLowerCase().includes(buscaOperacao.toLowerCase()))
                           .map(operacao => {
                             const selecionada = operacaoEmExibicao?.id === operacao.id
+                            const sessaoDaOperacao = sessoes.find(sessao =>
+                              sessao.ordemId === ordemEmExibicao.id
+                              && sessao.operacaoId === operacao.id,
+                            )
                             return (
                               <button
                                 key={operacao.id}
                                 type="button"
-                                onClick={() => !sessaoAtiva && setOperacaoSelecionadaId(operacao.id)}
-                                disabled={!!sessaoAtiva}
+                                onClick={() => {
+                                  if (sessaoAtiva && !podeIniciarMultiplos) return
+                                  if (sessaoDaOperacao?.maquinaId) setPostoSelecionadoId(sessaoDaOperacao.maquinaId)
+                                  setOperacaoSelecionadaId(operacao.id)
+                                }}
+                                disabled={!!sessaoAtiva && !podeIniciarMultiplos}
                                 className={"flex min-h-24 items-center gap-3 rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default " + (selecionada ? "border-primary bg-primary/5 shadow-sm shadow-primary/10" : "border-border bg-muted/20 hover:border-primary/40 hover:bg-muted/45")}
                               >
                                 <div className={"flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl " + (selecionada ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary")}>
@@ -2068,16 +2185,20 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                                 <div className="min-w-0 flex-1">
                                   <p className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Etapa {operacao.ordem}</p>
                                   <p className="mt-1 text-sm font-black text-foreground">{operacao.nome}</p>
-                                  <p className="mt-1 text-[10px] font-bold text-primary">{selecionada ? "Selecionada" : "Disponível"}</p>
+                                  <p className={"mt-1 text-[10px] font-bold " + (sessaoDaOperacao ? "text-green-600" : "text-primary")}>
+                                    {sessaoDaOperacao ? "Em andamento" : selecionada ? "Selecionada" : "Disponível"}
+                                  </p>
                                 </div>
-                                {selecionada && <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />}
+                                {sessaoDaOperacao
+                                  ? <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-green-500" />
+                                  : selecionada && <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />}
                               </button>
                             )
                           })}
                       </div>
                     )}
 
-                    {!sessaoAtiva && (
+                    {!sessaoAtiva && (sessoes.length === 0 || podeIniciarMultiplos) && (
                       <button
                         type="button"
                         onClick={() => operacaoSelecionadaId && handleIniciar(operacaoSelecionadaId)}

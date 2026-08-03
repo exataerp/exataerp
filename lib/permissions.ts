@@ -139,6 +139,12 @@ export function isSystemManager(userRoles: RoleName[]): boolean {
   return userRoles.includes(ROLES.SYSTEM_MANAGER)
 }
 
+/** Administradores e PCP podem manter mais de um apontamento ativo. */
+export function podeIniciarMultiplosApontamentos(userRoles: RoleName[]): boolean {
+  return userRoles.includes(ROLES.SYSTEM_MANAGER)
+    || userRoles.includes(ROLES.PRODUCTION_MANAGER)
+}
+
 // ------------------------------------------------------------
 // Labels de exibição para a UI de gerenciamento de equipe
 // ------------------------------------------------------------
