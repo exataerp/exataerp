@@ -1747,7 +1747,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           )}
         </header>
 
-        <div className="grid items-start gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
           <aside className="space-y-4 lg:sticky lg:top-0">
             <section className="rounded-3xl border border-border bg-card p-4 shadow-sm sm:p-5">
               <div className="mb-3 flex items-center justify-between gap-3">
