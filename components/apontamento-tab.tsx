@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import { podeIniciarMultiplosApontamentos } from "@/lib/permissions"
 import { isPausaProgramada } from "@/components/relatorios-tab"
 import { temPermissaoOverrideIntervalo } from "@/lib/scheduled-break-policy"
+import { isValidOperationalEntry } from "@/lib/audit"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Play, Pause, Square, ClipboardList, CheckCircle2, Clock,
@@ -470,7 +471,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       }
 
       setOrdens((opsRes.data || []) as OrdemProducao[])
-      setApontamentos((apRes.data || []) as Apontamento[])
+      setApontamentos(((apRes.data || []) as Apontamento[]).filter(item =>
+        isValidOperationalEntry(item.status),
+      ))
 
       const mapaDesc: Record<string, string> = {}
       for (const p of (prodRes.data || []) as any[]) {

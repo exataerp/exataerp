@@ -34,7 +34,7 @@ export interface ConsolidacaoOrdemProducao {
   concluida: boolean
 }
 
-const STATUS_CANCELADOS = new Set(["cancelado", "cancelada"])
+const STATUS_CANCELADOS = new Set(["cancelado", "cancelada", "estornado"])
 
 function quantidadeValida(valor: number | undefined): number {
   return Number.isFinite(valor) ? Math.max(0, Number(valor)) : 0

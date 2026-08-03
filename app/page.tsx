@@ -16,6 +16,7 @@ import { DashboardTab } from "@/components/dashboard-tab"
 import { MaquinasTab } from "@/components/maquinas-tab"
 import { ManutencaoTab } from "@/components/manutencao-tab"
 import { EquipeTab } from "@/components/equipe-tab"
+import { AuditoriaTab } from "@/components/auditoria-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
@@ -23,7 +24,7 @@ import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
   Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users, ShieldCheck,
-  Plus, Trash2, Pause
+  Plus, Trash2, Pause, FileSearch
 } from "lucide-react"
 
 type TabId = AbaId
@@ -38,6 +39,7 @@ const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.Eleme
   { id: "estoque",    label: "Estoque",           sublabel: "Controle de Inventário", icon: Boxes           },
   { id: "excecoes",   label: "Exceções",          sublabel: "Motivos de Parada",      icon: Tag             },
   { id: "relatorios", label: "Relatórios",        sublabel: "Análise de Desempenho",  icon: LineChart       },
+  { id: "auditoria",  label: "Auditoria",         sublabel: "Histórico e estornos",   icon: FileSearch      },
 ]
 
 const STORAGE_TAB = "exata_aba_ativa"
@@ -1071,6 +1073,12 @@ export default function ExataApp() {
             {canAccessActiveTab && activeTab === "relatorios" && (
               <div className="animate-in fade-in duration-300">
                 <RelatoriosTab empresaAtivaId={empresaAtivaId} relatorioSelecionado={relatorioAtivo} onChangeRelatorio={setRelatorioAtivo} />
+              </div>
+            )}
+
+            {canAccessActiveTab && activeTab === "auditoria" && empresaAtivaId && (
+              <div className="animate-in fade-in duration-300">
+                <AuditoriaTab empresaAtivaId={empresaAtivaId} />
               </div>
             )}
 

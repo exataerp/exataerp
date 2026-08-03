@@ -17,6 +17,7 @@ import {
   hasRole,
   isSystemManager,
 } from '@/lib/permissions'
+import { ALL_AUDIT_PERMISSIONS, AUDIT_PERMISSIONS, type AuditPermission } from '@/lib/audit'
 
 // ------------------------------------------------------------
 // Tipos
@@ -40,6 +41,7 @@ export interface SessionData {
   }
   empresa: EmpresaInfo
   roles: RoleName[]
+  permissions: string[]
   preferencias: { theme: string; language: string }
 }
 
@@ -58,6 +60,7 @@ interface AuthContextType {
 
   // Helpers de roles
   hasRole:          (role: RoleName) => boolean
+  hasPermission:    (permission: AuditPermission) => boolean
   canAccess:        (aba: AbaId) => boolean
   visibleTabs:      AbaId[]
   isSystemManager:  boolean
@@ -74,6 +77,7 @@ const AuthContext = createContext<AuthContextType>({
   signOut:        async () => ({ error: null }),
   reloadSession:  async () => {},
   hasRole:        () => false,
+  hasPermission:  () => false,
   canAccess:      () => false,
   visibleTabs:    [],
   isSystemManager: false,
@@ -124,6 +128,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const roles = (rolesData ?? []).map((r: any) => r.role_name as RoleName)
 
+      const { data: auditPermissionsData } = await supabase
+        .rpc('minhas_permissoes_auditoria', { p_empresa_id: perfil.empresa_id })
+
+      const permissions = Array.from(new Set([
+        ...(auditPermissionsData ?? []).map((item: any) => item.permission_code as string),
+        ...(roles.includes('system_manager') ? ALL_AUDIT_PERMISSIONS : []),
+      ]))
+
       // Busca preferências
       const { data: prefs } = await supabase
         .from('user_preferences')
@@ -148,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           plano:                'free',
         },
         roles,
+        permissions,
         preferencias: {
           theme:    prefs?.theme    ?? 'dark',
           language: prefs?.language ?? 'pt-BR',
@@ -212,8 +225,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Derivações de roles
   // ------------------------------------------------------------
   const userRoles = session?.roles ?? []
+  const userPermissions = session?.permissions ?? []
 
   const tabs = abasVisiveis(userRoles)
+  if (
+    userPermissions.includes(AUDIT_PERMISSIONS.VIEW)
+    && !tabs.includes('auditoria')
+  ) {
+    tabs.push('auditoria')
+  }
 
   return (
     <AuthContext.Provider value={{
@@ -224,7 +244,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signOut,
       reloadSession,
       hasRole:         (role: RoleName)  => hasRole(userRoles, role),
-      canAccess:       (aba: AbaId)      => podeAcessarAba(userRoles, aba),
+      hasPermission:   (permission: AuditPermission) => userPermissions.includes(permission),
+      canAccess:       (aba: AbaId)      => aba === 'auditoria'
+        ? userPermissions.includes(AUDIT_PERMISSIONS.VIEW)
+        : podeAcessarAba(userRoles, aba),
       visibleTabs:     tabs,
       isSystemManager: isSystemManager(userRoles),
     }}>

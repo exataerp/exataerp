@@ -6,7 +6,7 @@ import { useAuth, type RoleName, type AbaId } from '@/contexts/AuthContext'
 import { ROLES } from '@/lib/permissions'
 
 export function usePermissao() {
-  const { session, hasRole, canAccess, visibleTabs, isSystemManager } = useAuth()
+  const { session, hasRole, hasPermission, canAccess, visibleTabs, isSystemManager } = useAuth()
   const roles = session?.roles ?? []
 
   return {
@@ -26,6 +26,7 @@ export function usePermissao() {
 
     // Verificação genérica por role name
     hasRole,
+    hasPermission,
 
     // Verificação de acesso por aba
     canAccess,

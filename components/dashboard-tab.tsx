@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ChartTooltip } from "@/components/chart-tooltip"
 import { EmptyState } from "@/components/empty-state"
 import { Sparkline } from "@/components/sparkline"
+import { isValidOperationalEntry } from "@/lib/audit"
 import {
   TrendingUp, TrendingDown, Package, AlertTriangle, CheckCircle2,
   Clock, RefreshCw, Factory, Boxes, Wrench,
@@ -158,15 +159,20 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .select("id, maquina_id"),
       ])
 
+      const apontamentosValidos = ((aps || []) as Apontamento[]).filter(item =>
+        isValidOperationalEntry(item.status),
+      )
+      const idsValidos = new Set(apontamentosValidos.map(item => item.id))
+
       setOrdens((ops || []) as OrdemProducao[])
-      setApontamentos((aps || []) as Apontamento[])
+      setApontamentos(apontamentosValidos)
       setMaquinas((mqs || []) as Maquina[])
       setSaldos((sal || []).map((s: any) => ({
         insumo_id: s.insumo_id,
         saldo_atual: s.saldo_atual,
         insumo: s.insumos,
       })) as SaldoEstoque[])
-      setPausas((pss || []) as Pausa[])
+      setPausas(((pss || []) as Pausa[]).filter(item => idsValidos.has(item.apontamento_id)))
       setApontamentosAtivos((apsAtivos || []) as Apontamento[])
       setPausasAbertas((pssAbertas || []) as Pausa[])
       setOperacoes((opsData || []) as { id: string; maquina_id?: string }[])

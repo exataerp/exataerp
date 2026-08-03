@@ -20,7 +20,10 @@ export async function middleware(request: NextRequest) {
   // Esta rota recebe e valida explicitamente o Bearer token. Deixá-la passar
   // aqui evita que uma sessão em renovação seja convertida em redirect HTML
   // antes que o endpoint possa sincronizar o intervalo programado.
-  if (pathname === '/api/apontamentos/sincronizar-intervalo') {
+  if (
+    pathname === '/api/apontamentos/sincronizar-intervalo'
+    || pathname.startsWith('/api/auditoria')
+  ) {
     return NextResponse.next()
   }
 

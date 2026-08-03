@@ -36,6 +36,7 @@ export const ABAS = {
   ESTOQUE:        'estoque',
   EXCECOES:       'excecoes',
   RELATORIOS:     'relatorios',
+  AUDITORIA:      'auditoria',
   CONFIGURACOES:  'configuracoes',
   EQUIPE:         'equipe',
 } as const
@@ -96,6 +97,9 @@ export const ABA_ROLES: Record<AbaId, RoleName[]> = {
     ROLES.PRODUCTION_MANAGER,
     ROLES.STOCK_MANAGER,
     ROLES.QUALITY_MANAGER,
+  ],
+  auditoria: [
+    ROLES.SYSTEM_MANAGER,
   ],
   configuracoes: [
     ROLES.SYSTEM_MANAGER,

@@ -8,6 +8,7 @@ import { ChartTooltip } from "@/components/chart-tooltip"
 import { EmptyState as EmptyStateBase } from "@/components/empty-state"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePicker } from "@/components/date-picker"
+import { isValidOperationalEntry } from "@/lib/audit"
 import {
   calcularCicloRealVsPlanejado,
   calcularResumoCiclo,
@@ -388,8 +389,8 @@ export function RelatoriosTab({
         supabase.from("movimentacoes_estoque")
           .select("id, insumo_id, tipo, quantidade, custo_unitario, valor_total, created_at, insumos(codigo, descricao, unidade_medida)")
           .eq("empresa_id", empresaAtivaId!)
-          .eq("origem", "producao")
-          .in("tipo", ["saida", "entrada", "saida_producao", "entrada_producao", "refugo"])
+          .in("origem", ["producao", "auditoria"])
+          .in("tipo", ["saida", "entrada", "saida_producao", "entrada_producao", "refugo", "estorno_saida", "estorno_entrada"])
           .gte("created_at", inicio)
           .lte("created_at", fim),
         supabase.from("produtos")
@@ -405,8 +406,12 @@ export function RelatoriosTab({
           .eq("ativo", true),
       ])
 
-      setApontamentos((ap || []) as Apontamento[])
-      setPausas((ps || []).map((p: any) => ({
+      const apontamentosValidos = ((ap || []) as Apontamento[]).filter(item =>
+        isValidOperationalEntry(item.status),
+      )
+      const idsValidos = new Set(apontamentosValidos.map(item => item.id))
+      setApontamentos(apontamentosValidos)
+      setPausas((ps || []).filter((p: any) => idsValidos.has(p.apontamento_id)).map((p: any) => ({
         id: p.id,
         apontamento_id: p.apontamento_id,
         subgrupo_id: p.subgrupo_id,
@@ -646,7 +651,12 @@ export function RelatoriosTab({
   const dadosConsumo = useMemo(() => {
     const mapa: Record<string, { codigo: string; descricao: string; unidade: string; quantidade: number; valorTotal: number }> = {}
     for (const mv of movimentacoes) {
-      if (mv.tipo !== "saida" && mv.tipo !== "saida_producao") continue
+      const sinal = mv.tipo === "saida" || mv.tipo === "saida_producao"
+        ? 1
+        : mv.tipo === "estorno_entrada"
+          ? -1
+          : 0
+      if (sinal === 0) continue
       const key = mv.insumo_id
       if (!mapa[key]) mapa[key] = {
         codigo: mv.insumos?.codigo ?? "",
@@ -655,8 +665,8 @@ export function RelatoriosTab({
         quantidade: 0,
         valorTotal: 0,
       }
-      mapa[key].quantidade += mv.quantidade || 0
-      mapa[key].valorTotal += mv.valor_total || 0
+      mapa[key].quantidade += sinal * (mv.quantidade || 0)
+      mapa[key].valorTotal += sinal * (mv.valor_total || 0)
     }
     return Object.values(mapa)
       .sort((a, b) => b.valorTotal - a.valorTotal)

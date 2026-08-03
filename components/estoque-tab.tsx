@@ -81,6 +81,8 @@ const TIPO_MOV_LABELS: Record<string, { label: string; cor: string; icone: "in" 
   saida: { label: "Consumo", cor: "text-destructive", icone: "out" },
   saida_producao: { label: "Consumo OP", cor: "text-destructive", icone: "out" },
   entrada_producao: { label: "Produção Acabada", cor: "text-green-600", icone: "in" },
+  estorno_entrada: { label: "Estorno (entrada)", cor: "text-blue-600", icone: "in" },
+  estorno_saida: { label: "Estorno (saída)", cor: "text-amber-600", icone: "out" },
   ajuste_positivo: { label: "Ajuste +", cor: "text-primary", icone: "adj" },
   ajuste_negativo: { label: "Ajuste -", cor: "text-amber-500", icone: "adj" },
   refugo: { label: "Refugo", cor: "text-destructive", icone: "out" },
