@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { createPortal } from "react-dom"
+import { createPortal, flushSync } from "react-dom"
 import { supabase } from "@/components/supabase"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/contexts/AuthContext"
@@ -66,6 +66,9 @@ interface SessaoAtiva {
   maquinaId?: string
   maquinaNome: string
   inicioTimestamp: number
+  // Horário oficial que identifica o trecho atual no banco. O relógio exibido
+  // usa uma base local equivalente para não recuar por latência ou clock skew.
+  inicioBancoTimestamp?: number
   segundosAcumulados: number
   // Preserva a precisao entre pausas. O campo em segundos permanece para
   // restaurar sessoes salvas por versoes anteriores da aplicacao.
@@ -115,6 +118,20 @@ function calcularMilissegundosDecorridos(sessao: SessaoAtiva, agora = Date.now()
 
 function calcularSegundosDecorridos(sessao: SessaoAtiva, agora = Date.now()): number {
   return Math.floor(calcularMilissegundosDecorridos(sessao, agora) / MILISSEGUNDOS_POR_SEGUNDO)
+}
+
+function lerSessoesLocais(empresaId: string): SessaoAtiva[] {
+  if (typeof window === "undefined") return []
+
+  const raw = localStorage.getItem(SESSAO_KEY + empresaId)
+  if (!raw) return []
+
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : [parsed]
+  } catch {
+    return []
+  }
 }
 
 function renderModalPortal(children: React.ReactNode) {
@@ -394,6 +411,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
   const loadData = useCallback(async (silent = false) => {
     const versaoSessoesAoIniciar = versaoSessoesRef.current
+    const sessoesLocais = lerSessoesLocais(empresaAtivaId!)
     if (!silent) setLoading(true)
     try {
       const [opsRes, apRes, gRes, postosRes] = await Promise.all([
@@ -526,12 +544,28 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
             ? Number(ciclo.tempo) * (ciclo.unidade === "minutes" ? 60 : ciclo.unidade === "hours" ? 3600 : 1)
             : undefined
           const estaRodando = estadoOperacao === "em_execucao" && !!apontamento.cronometro_inicio
-          const inicioTimestamp = estaRodando
+          const inicioBancoTimestamp = estaRodando
             ? new Date(apontamento.cronometro_inicio!).getTime()
-            : agora
+            : undefined
+          const sessaoLocal = inicioBancoTimestamp == null
+            ? undefined
+            : sessoesLocais.find(sessao =>
+                sessao.apontamentoId === apontamento.id
+                && sessao.estadoOperacao === "em_execucao"
+                && sessao.pausaInicioTimestamp == null
+                && sessao.inicioBancoTimestamp === inicioBancoTimestamp,
+              )
+          const inicioTimestamp = sessaoLocal?.inicioTimestamp
+            ?? (inicioBancoTimestamp != null ? Math.min(inicioBancoTimestamp, agora) : agora)
           const pausaInicio = estadoOperacao !== "em_execucao"
             ? new Date(eventoIntervalo?.started_at || pausa?.inicio || agora).getTime()
             : undefined
+          const segundosAcumulados = sessaoLocal?.segundosAcumulados
+            ?? apontamento.cronometro_total_segundos
+            ?? 0
+          const milissegundosAcumulados = sessaoLocal
+            ? obterMilissegundosAcumulados(sessaoLocal)
+            : segundosAcumulados * MILISSEGUNDOS_POR_SEGUNDO
 
           return {
             apontamentoId: apontamento.id,
@@ -541,8 +575,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
             maquinaId: apontamento.maquina_id,
             maquinaNome: postosAtivos.find(posto => posto.id === apontamento.maquina_id)?.nome || "Posto de trabalho",
             inicioTimestamp,
-            segundosAcumulados: apontamento.cronometro_total_segundos || 0,
-            milissegundosAcumulados: (apontamento.cronometro_total_segundos || 0) * MILISSEGUNDOS_POR_SEGUNDO,
+            inicioBancoTimestamp,
+            segundosAcumulados,
+            milissegundosAcumulados,
             pausaInicioTimestamp: pausaInicio,
             pausaId: pausa?.fim ? undefined : pausa?.id,
             cicloPlanejadoSeg,
@@ -588,13 +623,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       loadData()
       // Restaura sessões do localStorage (aceita formato antigo, um objeto único, por compatibilidade)
       const raw = localStorage.getItem(SESSAO_KEY + empresaAtivaId)
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw)
-          const lista: SessaoAtiva[] = Array.isArray(parsed) ? parsed : [parsed]
-          setSessoes(lista)
-        } catch { }
-      }
+      if (raw) setSessoes(lerSessoesLocais(empresaAtivaId))
     }
   }, [empresaAtivaId, loadData])
 
@@ -919,6 +948,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       maquinaId: maquinaIdDefinitiva ?? undefined,
       maquinaNome: postos.find(p => p.id === postoSelecionadoId)?.nome ?? "Posto de trabalho",
       inicioTimestamp: inicioSolicitadoTimestamp,
+      inicioBancoTimestamp: undefined,
       segundosAcumulados: 0,
       milissegundosAcumulados: 0,
       estadoOperacao: "em_execucao",
@@ -927,8 +957,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     iniciandoApontamentoRef.current = true
     transicaoCronometroRef.current = true
     versaoSessoesRef.current += 1
-    setIniciandoApontamento(true)
-    setSessoes([sessaoPendente])
+    // Confirma o primeiro render antes de iniciar as chamadas de rede. Assim o
+    // painel e o 00:00 aparecem no mesmo clique, mesmo sob conexão lenta.
+    flushSync(() => {
+      setIniciandoApontamento(true)
+      setSegundosMap({ [sessaoPendente.apontamentoId]: 0 })
+      setSessoes([sessaoPendente])
+    })
 
     try {
       // A criação no banco e a busca do ciclo partem juntas. A sessão pendente
@@ -971,12 +1006,23 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       const cicloPlanejadoSeg = opDb
         ? Number(opDb.tempo) * (opDb.unidade === "minutes" ? 60 : opDb.unidade === "hours" ? 3600 : 1)
         : undefined
+      const confirmacaoTimestamp = Date.now()
+      const milissegundosDesdeClique = Math.max(
+        0,
+        confirmacaoTimestamp - inicioSolicitadoTimestamp,
+      )
+      const inicioBancoTimestamp = data.cronometro_inicio
+        ? new Date(data.cronometro_inicio).getTime()
+        : undefined
       const novaSessao: SessaoAtiva = {
         ...sessaoPendente,
         apontamentoId: data.id,
-        inicioTimestamp: data.cronometro_inicio
-          ? new Date(data.cronometro_inicio).getTime()
-          : inicioSolicitadoTimestamp,
+        // Mantém a linha do tempo que começou no clique. Trocar diretamente
+        // pelo horário do servidor fazia o relógio recuar ou congelar em zero.
+        inicioTimestamp: confirmacaoTimestamp,
+        inicioBancoTimestamp,
+        segundosAcumulados: Math.floor(milissegundosDesdeClique / MILISSEGUNDOS_POR_SEGUNDO),
+        milissegundosAcumulados: milissegundosDesdeClique,
         cicloPlanejadoSeg,
       }
 
@@ -1092,14 +1138,18 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
     transicaoCronometroRef.current = true
     versaoSessoesRef.current += 1
-    setRetomandoApontamentoId(apontamentoId)
-    setSessoes(atuais => atuais.map(item =>
-      item.apontamentoId === apontamentoId ? sessaoOtimista : item,
-    ))
-    setSegundosMap(atual => ({
-      ...atual,
-      [apontamentoId]: segundosAcumuladosOtimistas,
-    }))
+    // A retomada precisa ser visível no próprio clique. Sem o flush, o React
+    // pode manter este lote pendente enquanto a RPC ainda está em andamento.
+    flushSync(() => {
+      setRetomandoApontamentoId(apontamentoId)
+      setSessoes(atuais => atuais.map(item =>
+        item.apontamentoId === apontamentoId ? sessaoOtimista : item,
+      ))
+      setSegundosMap(atual => ({
+        ...atual,
+        [apontamentoId]: segundosAcumuladosOtimistas,
+      }))
+    })
 
     const restaurarSessaoPausada = () => {
       setSessoes(atuais => atuais.map(item =>
@@ -1136,19 +1186,29 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         return false
       }
 
+      const confirmacaoTimestamp = Date.now()
+      const milissegundosDesdeClique = Math.max(
+        0,
+        confirmacaoTimestamp - retomadaSolicitadaTimestamp,
+      )
       const retomadaBancoTimestamp = new Date((data as any).resumed_at).getTime()
-      const retomadaTimestamp = Number.isFinite(retomadaBancoTimestamp)
+      const inicioBancoTimestamp = Number.isFinite(retomadaBancoTimestamp)
         ? retomadaBancoTimestamp
-        : retomadaSolicitadaTimestamp
+        : undefined
       const totalRecebido = Number((data as any).total_seconds)
-      const segundosAcumulados = Number.isFinite(totalRecebido)
-        ? Math.max(0, totalRecebido)
-        : sessao.segundosAcumulados
+      const milissegundosAnteriores = Number.isFinite(totalRecebido)
+        ? Math.max(milissegundosAcumulados, Math.max(0, totalRecebido) * MILISSEGUNDOS_POR_SEGUNDO)
+        : milissegundosAcumulados
+      const milissegundosConfirmados = milissegundosAnteriores + milissegundosDesdeClique
       const sessaoAtualizada: SessaoAtiva = {
         ...sessaoOtimista,
-        inicioTimestamp: retomadaTimestamp,
-        segundosAcumulados,
-        milissegundosAcumulados: segundosAcumulados * MILISSEGUNDOS_POR_SEGUNDO,
+        // O servidor identifica oficialmente o trecho, mas o relógio visual
+        // continua na base local iniciada no clique. Isso evita congelamento
+        // quando há latência ou diferença entre os relógios cliente/servidor.
+        inicioTimestamp: confirmacaoTimestamp,
+        inicioBancoTimestamp,
+        segundosAcumulados: Math.floor(milissegundosConfirmados / MILISSEGUNDOS_POR_SEGUNDO),
+        milissegundosAcumulados: milissegundosConfirmados,
       }
       salvarSessoes(sessoes.map(s => s.apontamentoId === sessao.apontamentoId ? sessaoAtualizada : s))
       setShowOverrideIntervalo(false)
