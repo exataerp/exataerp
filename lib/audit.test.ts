@@ -20,6 +20,21 @@ const migration = readFileSync(
   "utf8",
 )
 
+const legacyCompatibilityMigration = readFileSync(
+  new URL("../supabase/migrations/20260803190000_libera_estorno_apontamentos_legados.sql", import.meta.url),
+  "utf8",
+)
+
+const auditComponent = readFileSync(
+  new URL("../components/auditoria-tab.tsx", import.meta.url),
+  "utf8",
+)
+
+const reversalRoute = readFileSync(
+  new URL("../app/api/auditoria/[id]/estornar/route.ts", import.meta.url),
+  "utf8",
+)
+
 const apontamento = (
   id: string,
   quantidadeProcessada: number,
@@ -159,5 +174,23 @@ describe("Auditoria do Sistema", () => {
   it("exige descrição quando o motivo selecionado é Outro", () => {
     assert.equal(validateReversalReason("outro", ""), "Descreva o motivo quando a opção Outro for selecionada.")
     assert.equal(validateReversalReason("outro", "Falha identificada no lote"), null)
+  })
+
+  it("libera o estorno de apontamentos finalizados antes da coluna de rastreabilidade", () => {
+    assert.match(legacyCompatibilityMigration, /a\.finalizado_em is null/)
+    assert.match(legacyCompatibilityMigration, /a\.status not in \('em_andamento', 'cancelado', 'cancelada'\)/)
+    assert.match(legacyCompatibilityMigration, /coalesce\(a\.updated_at, a\.created_at, now\(\)\)/)
+    assert.match(legacyCompatibilityMigration, /reverter_somente_movimentacoes_explicitamente_vinculadas/)
+    assert.doesNotMatch(legacyCompatibilityMigration, /update public\.saldo_estoque/i)
+    assert.doesNotMatch(legacyCompatibilityMigration, /insert into public\.movimentacoes_estoque/i)
+  })
+
+  it("não desabilita o botão por metadado legado e saneia o registro antes do estorno", () => {
+    const reversalBlockedExpression = auditComponent.match(/const reversalBlocked = Boolean\(([\s\S]*?)\n  \)/)?.[1] ?? ""
+
+    assert.doesNotMatch(reversalBlockedExpression, /dados_legados/)
+    assert.match(reversalRoute, /legacy_metadata_backfilled/)
+    assert.match(reversalRoute, /\.is\("finalizado_em", null\)/)
+    assert.match(reversalRoute, /reverter_somente_movimentacoes_explicitamente_vinculadas/)
   })
 })

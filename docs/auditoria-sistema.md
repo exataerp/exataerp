@@ -53,9 +53,11 @@ O papel `system_manager` recebe todas por padrão. O acesso é verificado no fro
 
 ## Dados legados
 
-Um apontamento com produção, sem `finalizado_em` e sem movimentações de produção vinculadas é classificado como legado. Ele pode ser consultado, mas o estorno é bloqueado porque não é possível afirmar com segurança quais efeitos de estoque devem ser revertidos.
+Apontamentos concluídos antes da introdução de `finalizado_em` recebem esse metadado pela migration de compatibilidade `20260803190000_libera_estorno_apontamentos_legados.sql`, usando `updated_at` e, como fallback, `created_at`. Isso libera o estorno de operações intermediárias antigas, que corretamente não possuem movimentação de estoque.
 
-O saneamento recomendado é reconstruir vínculos somente a partir de evidências documentais ou chaves existentes. A migration não inventa relacionamentos.
+O backfill não altera saldos. Ao estornar um registro antigo, somente movimentações de estoque explicitamente vinculadas pelo par `empresa_id + referencia_id` são compensadas. A correção do metadado também fica registrada em `audit_logs` com a ação `legacy_metadata_backfilled`.
+
+Como proteção adicional, o endpoint de estorno executa o mesmo saneamento de forma idempotente para um lançamento antigo ainda não migrado. A interface apresenta o aviso como informativo e mantém o botão disponível; vínculos estruturais ausentes ou saldo insuficiente continuam bloqueando o processo.
 
 ## Limites atuais
 

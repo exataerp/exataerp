@@ -34,6 +34,70 @@ export async function POST(
     const auditContext = await requireAuditPermission(request, AUDIT_PERMISSIONS.REVERSE, empresaId)
     const supabase = createUserScopedSupabase(request)
     const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || null
+
+    // Registros concluídos antes da coluna finalizado_em existir eram exibidos
+    // como legados e o botão ficava bloqueado. Completar somente esses
+    // metadados é seguro: o estorno abaixo continuará compensando apenas as
+    // movimentações de estoque explicitamente vinculadas ao apontamento.
+    const { data: legacyEntry, error: legacyLookupError } = await supabaseAdmin
+      .from("apontamentos")
+      .select("id, user_id, status, created_at, updated_at, finalizado_em, estornado_em, ordem_id, operacao_id, pecas_produzidas")
+      .eq("id", id)
+      .eq("empresa_id", empresaId)
+      .maybeSingle()
+
+    if (legacyLookupError) throw new Error(legacyLookupError.message)
+
+    if (
+      legacyEntry
+      && !legacyEntry.finalizado_em
+      && !legacyEntry.estornado_em
+      && !["em_andamento", "cancelado", "cancelada"].includes(legacyEntry.status)
+      && legacyEntry.ordem_id
+      && legacyEntry.operacao_id
+      && Number(legacyEntry.pecas_produzidas || 0) > 0
+    ) {
+      const finalizadoEmEstimado = legacyEntry.updated_at || legacyEntry.created_at
+      const { data: backfilledEntry, error: backfillError } = await supabaseAdmin
+        .from("apontamentos")
+        .update({
+          finalizado_em: finalizadoEmEstimado,
+          finalizado_por: legacyEntry.user_id,
+        })
+        .eq("id", id)
+        .eq("empresa_id", empresaId)
+        .is("finalizado_em", null)
+        .select("id, finalizado_em, finalizado_por")
+        .maybeSingle()
+
+      if (backfillError) throw new Error(backfillError.message)
+
+      if (backfilledEntry) {
+        const { error: backfillAuditError } = await supabaseAdmin.from("audit_logs").insert({
+          tenant_id: empresaId,
+          entity_type: "apontamento_producao",
+          entity_id: id,
+          action: "legacy_metadata_backfilled",
+          module: "producao",
+          original_record_id: id,
+          performed_by: auditContext.authUserId,
+          old_values: { finalizado_em: null, finalizado_por: null },
+          new_values: {
+            finalizado_em: backfilledEntry.finalizado_em,
+            finalizado_por: backfilledEntry.finalizado_por,
+          },
+          metadata: {
+            source: "api_auditoria",
+            stock_policy: "reverter_somente_movimentacoes_explicitamente_vinculadas",
+          },
+          ip_address: forwardedFor,
+          session_id: request.headers.get("x-vercel-id") || null,
+        })
+
+        if (backfillAuditError) throw new Error(backfillAuditError.message)
+      }
+    }
+
     const { data, error } = await supabase.rpc("estornar_apontamento_auditoria", {
       p_empresa_id: empresaId,
       p_apontamento_id: id,

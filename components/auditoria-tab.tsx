@@ -373,8 +373,7 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
   const stockBlocks = details?.dependencias?.bloqueios_estoque ?? []
   const missingLinks = details?.dependencias?.vinculos_ausentes ?? []
   const reversalBlocked = Boolean(
-    details?.dependencias?.dados_legados
-    || stockBlocks.length > 0
+    stockBlocks.length > 0
     || missingLinks.length > 0
     || details?.geral?.status_atual === "estornado"
     || details?.geral?.status_operacional === "em_andamento",
@@ -655,8 +654,14 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
                   <div className="flex gap-2">
                     <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
                     <div>
-                      <p className="font-bold">O estorno está bloqueado até que as dependências sejam resolvidas.</p>
-                      {details.dependencias.dados_legados && <p className="mt-1">O lançamento é legado e não possui vínculos de estoque confiáveis.</p>}
+                      <p className="font-bold">
+                        {missingLinks.length > 0 || stockBlocks.length > 0
+                          ? "O estorno está bloqueado até que as dependências sejam resolvidas."
+                          : "Lançamento anterior ao fluxo transacional."}
+                      </p>
+                      {details.dependencias.dados_legados && (
+                        <p className="mt-1">A data de finalização será recuperada automaticamente. Somente movimentações de estoque vinculadas serão revertidas.</p>
+                      )}
                       {missingLinks.length > 0 && <p className="mt-1">Vínculos ausentes: {missingLinks.join(", ")}.</p>}
                       {stockBlocks.map(block => <p key={block.movimentacao_id} className="mt-1">Item {block.insumo_codigo}: saldo {formatQuantity(block.saldo_disponivel)}, necessário {formatQuantity(block.quantidade_necessaria)}.</p>)}
                     </div>
