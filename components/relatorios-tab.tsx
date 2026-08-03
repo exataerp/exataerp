@@ -81,6 +81,9 @@ interface OrdemProducao {
   quantidade: number
   data_programacao: string
   status?: string
+  quantidade_produzida?: number
+  quantidade_aprovada?: number
+  concluida_em?: string | null
 }
 
 interface Maquina {
@@ -308,7 +311,6 @@ export function RelatoriosTab({
   const [movimentacoes, setMovimentacoes] = useState<any[]>([])
   const [turnos, setTurnos] = useState<TurnoProgramado[]>([])
   const [empresaConfig, setEmpresaConfig] = useState<EmpresaConfigRelatorios | null>(null)
-  const [codigoProdutoPorId, setCodigoProdutoPorId] = useState<Record<string, string>>({})
   const [produtos, setProdutos] = useState<ProdutoRelatorio[]>([])
   const [produtoCicloExpandido, setProdutoCicloExpandido] = useState<string | null>(null)
 
@@ -375,7 +377,7 @@ export function RelatoriosTab({
           .gte("inicio", inicio)
           .lte("inicio", fim),
         supabase.from("ordens_producao")
-          .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
+          .select("id, numero_op, produto_codigo, quantidade, data_programacao, status, quantidade_produzida, quantidade_aprovada, concluida_em")
           .eq("empresa_id", empresaAtivaId!),
         supabase.from("maquinas")
           .select("id, nome, codigo, turno_id")
@@ -386,7 +388,8 @@ export function RelatoriosTab({
         supabase.from("movimentacoes_estoque")
           .select("id, insumo_id, tipo, quantidade, custo_unitario, valor_total, created_at, insumos(codigo, descricao, unidade_medida)")
           .eq("empresa_id", empresaAtivaId!)
-          .in("tipo", ["saida_producao", "entrada_producao", "refugo"])
+          .eq("origem", "producao")
+          .in("tipo", ["saida", "entrada", "saida_producao", "entrada_producao", "refugo"])
           .gte("created_at", inicio)
           .lte("created_at", fim),
         supabase.from("produtos")
@@ -426,13 +429,10 @@ export function RelatoriosTab({
       setProdutos((prods || []) as ProdutoRelatorio[])
 
       const mapaDesc: Record<string, string> = {}
-      const mapaCodigoPorId: Record<string, string> = {}
       for (const p of (prods || []) as any[]) {
         if (p.descricao) mapaDesc[p.codigo] = p.descricao
-        if (p.id && p.codigo) mapaCodigoPorId[p.id] = p.codigo
       }
       setMapaDescricaoProdutos(mapaDesc)
-      setCodigoProdutoPorId(mapaCodigoPorId)
     } finally {
       setLoading(false)
     }
@@ -574,26 +574,38 @@ export function RelatoriosTab({
     }).filter(d => d.tempoRodando > 0 || d.totalProduzidas > 0)
   }, [maquinas, filteredApontamentos, operacoes, inicio, fim, selectedMaquinaId, turnos, empresaConfig])
 
-  /**
-   * ─── Taxa de refugo por produto ───────────────────────────────────────────
-   * Regra de Negócio:
-   * - Produção Bruta: soma de pecas_produzidas apontadas.
-   * - Refugo: soma de pecas_refugo.
-   * - Retrabalho: soma de pecas_retrabalho.
-   * - Taxa de Refugo (%): (Refugo / Produção Bruta) * 100 se Produção Bruta > 0.
-   */
+  /** Qualidade consolidada por OP, sem somar a mesma peça entre operações. */
   const dadosRefugo = useMemo(() => {
-    const mapa: Record<string, { produtoRotulo: string; produzidas: number; refugo: number; retrabalho: number }> = {}
-    for (const ap of filteredApontamentos) {
-      const op = ordens.find(o => o.id === ap.ordem_id)
-      const codigo = op?.produto_codigo ?? "Desconhecido"
+    const mapa: Record<string, { produtoRotulo: string; produzidas: number; refugo: number; retrabalho: number; processadasOperacionais: number }> = {}
+    const apontamentosConcluidos = filteredApontamentos.filter(a => a.status !== "em_andamento")
+    const ordensNoFiltro = new Set(apontamentosConcluidos.map(apontamento => apontamento.ordem_id))
+    const retrabalhoPorOrdem = new Map<string, number>()
+    const processadasOperacionaisPorOrdem = new Map<string, number>()
+    for (const apontamento of apontamentosConcluidos) {
+      retrabalhoPorOrdem.set(
+        apontamento.ordem_id,
+        (retrabalhoPorOrdem.get(apontamento.ordem_id) || 0) + (apontamento.pecas_retrabalho || 0),
+      )
+      processadasOperacionaisPorOrdem.set(
+        apontamento.ordem_id,
+        (processadasOperacionaisPorOrdem.get(apontamento.ordem_id) || 0) + (apontamento.pecas_produzidas || 0),
+      )
+    }
+
+    for (const op of ordens) {
+      if (!ordensNoFiltro.has(op.id)) continue
+      const codigo = op.produto_codigo || "Desconhecido"
       const desc = mapaDescricaoProdutos[codigo]
       const produtoRotulo = desc ? `${codigo} - ${desc}` : codigo
+      const produzidas = Math.max(0, op.quantidade_produzida || 0)
+      const aprovadas = Math.max(0, op.quantidade_aprovada || 0)
 
-      if (!mapa[codigo]) mapa[codigo] = { produtoRotulo, produzidas: 0, refugo: 0, retrabalho: 0 }
-      mapa[codigo].produzidas += ap.pecas_produzidas || 0
-      mapa[codigo].refugo += ap.pecas_refugo || 0
-      mapa[codigo].retrabalho += ap.pecas_retrabalho || 0
+      if (!mapa[codigo]) mapa[codigo] = { produtoRotulo, produzidas: 0, refugo: 0, retrabalho: 0, processadasOperacionais: 0 }
+      mapa[codigo].produzidas += produzidas
+      mapa[codigo].refugo += Math.max(0, produzidas - aprovadas)
+      // Retrabalho é volume operacional; não aumenta o produto acabado.
+      mapa[codigo].retrabalho += retrabalhoPorOrdem.get(op.id) || 0
+      mapa[codigo].processadasOperacionais += processadasOperacionaisPorOrdem.get(op.id) || 0
     }
     return Object.entries(mapa)
       .map(([codigo, d]) => ({
@@ -601,8 +613,9 @@ export function RelatoriosTab({
         produzidas: d.produzidas,
         refugo: d.refugo,
         retrabalho: d.retrabalho,
+        processadasOperacionais: d.processadasOperacionais,
         taxaRefugo: d.produzidas > 0 ? parseFloat(((d.refugo / d.produzidas) * 100).toFixed(1)) : 0,
-        taxaRetrabalho: d.produzidas > 0 ? parseFloat(((d.retrabalho / d.produzidas) * 100).toFixed(1)) : 0,
+        taxaRetrabalho: d.processadasOperacionais > 0 ? parseFloat(((d.retrabalho / d.processadasOperacionais) * 100).toFixed(1)) : 0,
       }))
       .sort((a, b) => b.taxaRefugo - a.taxaRefugo)
   }, [filteredApontamentos, ordens, mapaDescricaoProdutos])
@@ -633,7 +646,7 @@ export function RelatoriosTab({
   const dadosConsumo = useMemo(() => {
     const mapa: Record<string, { codigo: string; descricao: string; unidade: string; quantidade: number; valorTotal: number }> = {}
     for (const mv of movimentacoes) {
-      if (mv.tipo !== "saida_producao") continue
+      if (mv.tipo !== "saida" && mv.tipo !== "saida_producao") continue
       const key = mv.insumo_id
       if (!mapa[key]) mapa[key] = {
         codigo: mv.insumos?.codigo ?? "",
@@ -676,41 +689,21 @@ export function RelatoriosTab({
       .slice(0, 10)
   }, [pausas])
 
-  const ultimaOperacaoPorProduto = useMemo(() => {
-    const mapa: Record<string, { operacaoId: string; ordem: number }> = {}
-    for (const operacao of operacoes) {
-      if (!operacao.produto_id) continue
-      const codigoProduto = codigoProdutoPorId[operacao.produto_id]
-      if (!codigoProduto) continue
-
-      const ordemOperacao = Number(operacao.ordem) || 0
-      const atual = mapa[codigoProduto]
-      if (!atual || ordemOperacao > atual.ordem) {
-        mapa[codigoProduto] = { operacaoId: operacao.id, ordem: ordemOperacao }
-      }
-    }
-    return Object.fromEntries(
-      Object.entries(mapa).map(([produto, valor]) => [produto, valor.operacaoId]),
-    ) as Record<string, string>
-  }, [operacoes, codigoProdutoPorId])
-
   // ─── KPIs gerais ─────────────────────────────────────────────────────────
 
   const kpis = useMemo(() => {
     const apontamentosConcluidos = filteredApontamentos.filter(a => a.status !== "em_andamento")
-    const ordensPorId = new Map(ordens.map(ordem => [ordem.id, ordem]))
-    const apontamentosUltimaEtapa = apontamentosConcluidos.filter(apontamento => {
-      const ordem = ordensPorId.get(apontamento.ordem_id)
-      const ultimaOperacaoId = ordem ? ultimaOperacaoPorProduto[ordem.produto_codigo] : undefined
-      return !!ultimaOperacaoId && apontamento.operacao_id === ultimaOperacaoId
-    })
-
-    // Produção acabada: conta as peças somente na última etapa do roteiro.
-    // A base operacional continua sendo usada para refugo, pois o refugo pode
-    // ser registrado em qualquer etapa e deve usar as peças processadas.
-    const totalProduzidas = apontamentosUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalProcessadas = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalRefugo = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
+    const ordensNoFiltro = new Set(apontamentosConcluidos.map(apontamento => apontamento.ordem_id))
+    const ordensConsolidadas = ordens.filter(ordem => ordensNoFiltro.has(ordem.id))
+    const totalProcessadas = ordensConsolidadas.reduce(
+      (total, ordem) => total + Math.max(0, ordem.quantidade_produzida || 0),
+      0,
+    )
+    const totalProduzidas = ordensConsolidadas.reduce(
+      (total, ordem) => total + Math.max(0, ordem.quantidade_aprovada || 0),
+      0,
+    )
+    const totalRefugo = Math.max(0, totalProcessadas - totalProduzidas)
     const totalRetrabalho = apontamentosConcluidos.reduce((s, a) => s + (a.pecas_retrabalho || 0), 0)
     const totalSegundos = apontamentosConcluidos.reduce((s, a) => s + (a.cronometro_total_segundos || 0), 0)
     const totalPausaSeg = pausas.reduce((s, p) => {
@@ -726,7 +719,7 @@ export function RelatoriosTab({
       ? dadosOEECalculaveis.reduce((s, d) => s + d.oee, 0) / dadosOEECalculaveis.length
       : 0
     return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, temBaseRefugo, temBaseOEE, taxaRefugo, oeeGeral }
-  }, [filteredApontamentos, pausas, dadosOEE, ordens, ultimaOperacaoPorProduto])
+  }, [filteredApontamentos, pausas, dadosOEE, ordens])
 
   if (loading) {
     return (
@@ -927,7 +920,7 @@ export function RelatoriosTab({
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      {["Máquina", "Disponib.", "Perform.", "Qualidade", "OEE", "Peças boas", "Refugo"].map(h => (
+                      {["Máquina", "Disponib.", "Perform.", "Qualidade", "OEE", "Aprovadas na operação", "Refugo na operação"].map(h => (
                         <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">{h}</th>
                       ))}
                     </tr>
@@ -988,7 +981,7 @@ export function RelatoriosTab({
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
-                      {["Produto", "Produzidas", "Refugo", "Retrabalho", "Taxa Refugo", "Taxa Retrabalho"].map(h => (
+                      {["Produto", "Processadas no roteiro", "Refugo consolidado", "Retrabalho operacional", "Taxa Refugo", "Taxa Retrab. Operacional"].map(h => (
                         <th key={h} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">{h}</th>
                       ))}
                     </tr>
@@ -1029,7 +1022,7 @@ export function RelatoriosTab({
                       </td>
                       <td className="px-4 py-3 text-amber-500">
                         {(() => {
-                          const totProd = dadosRefugo.reduce((s, d) => s + d.produzidas, 0)
+                          const totProd = dadosRefugo.reduce((s, d) => s + d.processadasOperacionais, 0)
                           const totRet = dadosRefugo.reduce((s, d) => s + d.retrabalho, 0)
                           const taxa = totProd > 0 ? (totRet / totProd) * 100 : 0
                           return `${formatNum(taxa)}%`

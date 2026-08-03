@@ -27,6 +27,9 @@ interface OrdemProducao {
   quantidade: number
   data_programacao: string
   status?: string
+  quantidade_produzida?: number
+  quantidade_aprovada?: number
+  concluida_em?: string | null
 }
 
 interface Apontamento {
@@ -92,7 +95,6 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
   const [pausas, setPausas] = useState<Pausa[]>([])
   const [apontamentosAtivos, setApontamentosAtivos] = useState<Apontamento[]>([])
   const [pausasAbertas, setPausasAbertas] = useState<Pausa[]>([])
-  const [ultimaOperacaoPorProduto, setUltimaOperacaoPorProduto] = useState<Record<string, string>>({})
   const [ultimaAtualizacao, setUltimaAtualizacao] = useState<Date>(new Date())
 
   const { dataInicio, dataFim } = useMemo(() => {
@@ -123,7 +125,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
       const [{ data: ops }, { data: aps }, { data: mqs }, { data: sal }, { data: pss }, { data: prods }, { data: apsAtivos }, { data: pssAbertas }, { data: opsData }] = await Promise.all([
         supabase.from("ordens_producao")
-          .select("id, numero_op, produto_codigo, quantidade, data_programacao, status")
+          .select("id, numero_op, produto_codigo, quantidade, data_programacao, status, quantidade_produzida, quantidade_aprovada, concluida_em")
           .eq("empresa_id", empresaAtivaId)
           .order("data_programacao", { ascending: false }),
         supabase.from("apontamentos")
@@ -142,7 +144,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .eq("empresa_id", empresaAtivaId)
           .gte("inicio", inicioISO),
         supabase.from("produtos")
-          .select("codigo, descricao, operacoes(id, ordem)")
+          .select("codigo, descricao")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamentos")
           .select("id, maquina_id, status, estado_operacao, created_at")
@@ -169,17 +171,10 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       setPausasAbertas((pssAbertas || []) as Pausa[])
       setOperacoes((opsData || []) as { id: string; maquina_id?: string }[])
 
-      // Mapeia produto -> id da última operação do roteiro (a que realmente entrega a peça pronta)
-      const mapaUltimaOp: Record<string, string> = {}
       const mapaDesc: Record<string, string> = {}
       for (const p of (prods || []) as any[]) {
         if (p.descricao) mapaDesc[p.codigo] = p.descricao
-        const opsRoteiro = (p.operacoes || []) as { id: string; ordem: number }[]
-        if (opsRoteiro.length === 0) continue
-        const ultima = opsRoteiro.reduce((a, b) => (b.ordem > a.ordem ? b : a))
-        mapaUltimaOp[p.codigo] = ultima.id
       }
-      setUltimaOperacaoPorProduto(mapaUltimaOp)
       setMapaDescricaoProdutos(mapaDesc)
 
       setUltimaAtualizacao(new Date())
@@ -206,11 +201,25 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
   // ─── KPIs ──────────────────────────────────────────────────────────────────
 
   const kpis = useMemo(() => {
-    const totalProduzidas = apontamentos.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-    const totalRefugo = apontamentos.reduce((s, a) => s + (a.pecas_refugo || 0), 0)
-    const temBaseRefugo = totalProduzidas + totalRefugo > 0
+    const inicioPeriodo = new Date(dataInicio + "T00:00:00").getTime()
+    const fimPeriodo = new Date(dataFim + "T23:59:59.999").getTime()
+    const ordensConcluidasNoPeriodo = ordens.filter(ordem => {
+      if (ordem.status !== "encerrada" || !ordem.concluida_em) return false
+      const conclusao = new Date(ordem.concluida_em).getTime()
+      return conclusao >= inicioPeriodo && conclusao <= fimPeriodo
+    })
+    const totalProcessadas = ordensConcluidasNoPeriodo.reduce(
+      (total, ordem) => total + Math.max(0, ordem.quantidade_produzida || 0),
+      0,
+    )
+    const totalProduzidas = ordensConcluidasNoPeriodo.reduce(
+      (total, ordem) => total + Math.max(0, ordem.quantidade_aprovada || 0),
+      0,
+    )
+    const totalRefugo = Math.max(0, totalProcessadas - totalProduzidas)
+    const temBaseRefugo = totalProcessadas > 0
     const taxaRefugo = temBaseRefugo
-      ? (totalRefugo / (totalProduzidas + totalRefugo)) * 100 : 0
+      ? (totalRefugo / totalProcessadas) * 100 : 0
 
     const opsAbertas = ordens.filter(o => o.status !== "encerrada").length
     const opsConcluidas = ordens.filter(o => o.status === "encerrada").length
@@ -230,7 +239,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
     }, 0)
 
     return { totalProduzidas, totalRefugo, temBaseRefugo, taxaRefugo, opsAbertas, opsConcluidas, opsAtrasadas, maqAtivas, estoquesCriticos, estoquesZerados, totalTempoPausa }
-  }, [apontamentos, ordens, saldos, pausas])
+  }, [apontamentos, ordens, saldos, pausas, dataInicio, dataFim])
 
   // ─── Tendência de produção nos últimos 7 dias (sparkline do KPI) ───────────
   const tendenciaProducao7d = useMemo(() => {
@@ -242,12 +251,13 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       dias.push(toDateStr(d))
     }
     const porDia: Record<string, number> = Object.fromEntries(dias.map(d => [d, 0]))
-    for (const a of apontamentos) {
-      const dia = toDateStr(new Date(a.created_at))
-      if (dia in porDia) porDia[dia] += (a.pecas_produzidas || 0)
+    for (const ordem of ordens) {
+      if (ordem.status !== "encerrada" || !ordem.concluida_em) continue
+      const dia = toDateStr(new Date(ordem.concluida_em))
+      if (dia in porDia) porDia[dia] += Math.max(0, ordem.quantidade_aprovada || 0)
     }
     return dias.map(d => porDia[d])
-  }, [apontamentos])
+  }, [ordens])
 
   // ─── Produção por máquina ──────────────────────────────────────────────────
 
@@ -272,17 +282,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       .filter(o => o.status !== "encerrada")
       .map(op => {
         const aps = apontamentos.filter(a => a.ordem_id === op.id)
-        const ultimaOperacaoId = ultimaOperacaoPorProduto[op.produto_codigo]
-        // Progresso real da OP = peças que passaram pela última etapa do roteiro,
-        // não a soma de todas as etapas (senão uma peça é contada 1x por operação)
-        const apsUltimaEtapa = ultimaOperacaoId
-          ? aps.filter(a => a.operacao_id === ultimaOperacaoId)
-          : aps
-        let produzidas = apsUltimaEtapa.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-        if (produzidas === 0 && aps.length > 0) {
-          const totalGeralAps = aps.reduce((s, a) => s + (a.pecas_produzidas || 0), 0)
-          if (totalGeralAps > 0) produzidas = totalGeralAps
-        }
+        const produzidas = Math.max(0, op.quantidade_aprovada || 0)
         const pct = op.quantidade > 0 ? Math.min(100, (produzidas / op.quantidade) * 100) : 0
         const atrasada = op.data_programacao < toDateStr(new Date())
         const emAndamento = aps.some(a => a.status === "em_andamento")
@@ -294,7 +294,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
         return 0
       })
       .slice(0, 6)
-  }, [ordens, apontamentos, ultimaOperacaoPorProduto])
+  }, [ordens, apontamentos])
 
   // ─── Status das máquinas ──────────────────────────────────────────────────
 
@@ -424,7 +424,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
-            label: "Peças produzidas",
+            label: "Peças acabadas aprovadas",
             value: kpis.totalProduzidas,
             decimals: 0,
             suffix: "",
@@ -541,7 +541,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                       <span className="text-xs font-bold text-foreground">{opTitle}</span>
                       <span className="text-[10px] font-bold px-2 py-0.5 bg-primary/10 text-primary rounded-full truncate max-w-[220px]" title={prodTexto}>{prodTexto}</span>
                       {atrasada && <span className="text-[10px] font-bold px-1.5 py-0.5 bg-destructive/10 text-destructive rounded-full flex-shrink-0">Atrasada</span>}
-                      {pct >= 100 || op.status === "encerrada" ? (
+                      {op.status === "encerrada" ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-600 rounded-full border border-blue-500/20 flex-shrink-0">Encerrada</span>
                       ) : emAndamento || pct > 0 ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 bg-green-500/10 text-green-600 rounded-full border border-green-500/20 flex items-center gap-1 flex-shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />Iniciada</span>
@@ -556,7 +556,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                 </div>
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${atrasada ? "bg-destructive" : pct >= 100 || op.status === "encerrada" ? "bg-blue-500" : pct > 0 ? "bg-green-500" : "bg-amber-500"}`}
+                    className={`h-full rounded-full transition-all ${atrasada ? "bg-destructive" : op.status === "encerrada" ? "bg-blue-500" : pct > 0 ? "bg-green-500" : "bg-amber-500"}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -575,9 +575,9 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
 
         <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
           <h3 className="text-sm font-bold text-foreground mb-1 flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-primary" /> Produção por máquina
+            <BarChart3 className="h-4 w-4 text-primary" /> Processamento por máquina
           </h3>
-          <p className="text-[11px] text-muted-foreground mb-4">Peças produzidas no período</p>
+          <p className="text-[11px] text-muted-foreground mb-4">Volume processado em cada operação no período</p>
           {producaoPorMaquina.length === 0 ? (
             <EmptyState icon={Factory} title="Sem apontamentos no período" className="py-10" />
           ) : (
@@ -587,8 +587,8 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
                 <XAxis type="number" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
                 <YAxis dataKey="nome" type="category" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} width={55} />
                 <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="produzidas" name="Produzidas" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} barSize={18} />
-                <Bar dataKey="refugo" name="Refugo" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={18} />
+                <Bar dataKey="produzidas" name="Processadas na operação" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} barSize={18} />
+                <Bar dataKey="refugo" name="Refugo na operação" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={18} />
               </BarChart>
             </ResponsiveContainer>
           )}
