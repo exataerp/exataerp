@@ -23,6 +23,119 @@ export const REVERSAL_REASONS = [
   { value: "outro", label: "Outro" },
 ] as const
 
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  created: "Lançamento criado",
+  start: "Apontamento iniciado",
+  production_report_finalized: "Apontamento de produção finalizado",
+  production_report_reversed: "Apontamento de produção estornado",
+  production_order_reopened: "Ordem de produção reaberta",
+  reversed: "Lançamento estornado",
+  deleted_logically: "Exclusão lógica do lançamento",
+  reversal_blocked: "Estorno bloqueado",
+  reversal_failed: "Falha ao estornar lançamento",
+  legacy_metadata_backfilled: "Metadados históricos recuperados",
+  scheduled_break: "Intervalo programado",
+  scheduled_break_override: "Retomada antecipada do intervalo",
+  override_scheduled_break: "Intervalo programado ignorado",
+  manual_stop: "Parada manual",
+  early_resume: "Retomada antecipada",
+}
+
+const AUDIT_MODULE_LABELS: Record<string, string> = {
+  producao: "Produção",
+  production: "Produção",
+  estoque: "Estoque",
+  inventory: "Estoque",
+  auditoria: "Auditoria",
+  audit: "Auditoria",
+  sistema: "Sistema",
+  system: "Sistema",
+}
+
+const AUDIT_TYPE_LABELS: Record<string, string> = {
+  apontamento: "Apontamento",
+  apontamento_producao: "Apontamento de produção",
+  ordem_producao: "Ordem de produção",
+  movimentacao_estoque: "Movimentação de estoque",
+}
+
+const AUDIT_ORIGIN_LABELS: Record<string, string> = {
+  operador: "Operador",
+  operator: "Operador",
+  operator_screen: "Tela do operador",
+  administrador: "Administrador",
+  administrator: "Administrador",
+  sistema: "Sistema",
+  system: "Sistema",
+  pg_cron: "Automação do sistema",
+  database_rule: "Regra do sistema",
+  producao: "Produção",
+  production: "Produção",
+  auditoria: "Auditoria",
+  audit: "Auditoria",
+  user_override: "Ação do usuário",
+}
+
+const STOCK_MOVEMENT_LABELS: Record<string, string> = {
+  entrada: "Entrada",
+  entrada_producao: "Entrada de produção",
+  saida: "Saída",
+  saida_producao: "Saída de produção",
+  estorno_entrada: "Estorno (entrada)",
+  estorno_saida: "Estorno (saída)",
+}
+
+const AUDIT_STATUS_LABELS: Record<string, string> = {
+  ativo: "Ativo",
+  estornado: "Estornado",
+  corrigido: "Corrigido",
+  cancelado: "Cancelado",
+  cancelada: "Cancelado",
+  em_andamento: "Em andamento",
+  aberto: "Aberto",
+  fechado: "Fechado",
+  finalizado: "Finalizado",
+  finalizada: "Finalizada",
+}
+
+function normalizedCode(value: unknown) {
+  return String(value ?? "").trim().toLowerCase()
+}
+
+export function auditActionLabel(value: unknown) {
+  return AUDIT_ACTION_LABELS[normalizedCode(value)] ?? "Evento registrado pelo sistema"
+}
+
+export function auditModuleLabel(value: unknown) {
+  return AUDIT_MODULE_LABELS[normalizedCode(value)] ?? "Sistema"
+}
+
+export function auditTypeLabel(value: unknown) {
+  return AUDIT_TYPE_LABELS[normalizedCode(value)] ?? "Registro do sistema"
+}
+
+export function auditOriginLabel(value: unknown) {
+  return AUDIT_ORIGIN_LABELS[normalizedCode(value)] ?? "Sistema"
+}
+
+export function stockMovementLabel(value: unknown) {
+  return STOCK_MOVEMENT_LABELS[normalizedCode(value)] ?? "Movimentação de estoque"
+}
+
+export function auditStatusLabel(value: unknown) {
+  return AUDIT_STATUS_LABELS[normalizedCode(value)] ?? "Não informado"
+}
+
+export function auditReasonLabel(value: unknown) {
+  const text = String(value ?? "").trim()
+  if (!text) return "Não informado"
+
+  const configuredReason = REVERSAL_REASONS.find(reason => reason.value === text)
+  if (configuredReason) return configuredReason.label
+
+  return text.includes("_") ? "Motivo registrado no sistema" : text
+}
+
 export const INVALID_OPERATIONAL_STATUSES = new Set([
   "cancelado",
   "cancelada",

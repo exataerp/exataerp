@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { AUDIT_PERMISSIONS } from "@/lib/audit"
+import {
+  AUDIT_PERMISSIONS,
+  auditModuleLabel,
+  auditReasonLabel,
+  auditStatusLabel,
+  auditTypeLabel,
+} from "@/lib/audit"
 import {
   auditErrorResponse,
   createUserScopedSupabase,
@@ -68,12 +74,12 @@ export async function GET(request: NextRequest) {
       "Administrador do estorno", "Motivo", "Descrição do motivo", "Data do estorno",
     ]
     const rows = items.map(item => [
-      item.id, item.lancamento_em, item.tipo_lancamento, item.modulo,
+      item.id, item.lancamento_em, auditTypeLabel(item.tipo_lancamento), auditModuleLabel(item.modulo),
       item.usuario_nome, item.operador_nome, item.numero_op, item.produto_codigo,
       item.produto_descricao, item.operacao_nome,
       [item.maquina_codigo, item.maquina_nome].filter(Boolean).join(" - "),
       item.quantidade_lancada, item.quantidade_aprovada, item.quantidade_refugada,
-      item.status_atual, item.estornado_por_nome, item.motivo_estorno_codigo,
+      auditStatusLabel(item.status_atual), item.estornado_por_nome, auditReasonLabel(item.motivo_estorno_codigo),
       item.motivo_estorno_descricao, item.estornado_em,
     ])
 

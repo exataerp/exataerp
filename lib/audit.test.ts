@@ -4,8 +4,15 @@ import { describe, it } from "node:test"
 
 import {
   AUDIT_PERMISSIONS,
+  auditActionLabel,
+  auditModuleLabel,
+  auditOriginLabel,
+  auditReasonLabel,
+  auditStatusLabel,
+  auditTypeLabel,
   isValidOperationalEntry,
   planStockReversal,
+  stockMovementLabel,
   validateReversalReason,
 } from "./audit.ts"
 import { ABAS, ROLES, podeAcessarAba } from "./permissions.ts"
@@ -192,5 +199,18 @@ describe("Auditoria do Sistema", () => {
     assert.match(reversalRoute, /legacy_metadata_backfilled/)
     assert.match(reversalRoute, /\.is\("finalizado_em", null\)/)
     assert.match(reversalRoute, /reverter_somente_movimentacoes_explicitamente_vinculadas/)
+  })
+
+  it("traduz códigos internos da auditoria integralmente para Português BR", () => {
+    assert.equal(auditActionLabel("created"), "Lançamento criado")
+    assert.equal(auditActionLabel("production_report_finalized"), "Apontamento de produção finalizado")
+    assert.equal(auditActionLabel("production_report_reversed"), "Apontamento de produção estornado")
+    assert.equal(auditActionLabel("unknown_event"), "Evento registrado pelo sistema")
+    assert.equal(auditModuleLabel("production"), "Produção")
+    assert.equal(auditTypeLabel("apontamento_producao"), "Apontamento de produção")
+    assert.equal(auditOriginLabel("administrator"), "Administrador")
+    assert.equal(stockMovementLabel("entrada_producao"), "Entrada de produção")
+    assert.equal(auditStatusLabel("em_andamento"), "Em andamento")
+    assert.equal(auditReasonLabel("quantidade_incorreta"), "Quantidade lançada incorretamente")
   })
 })

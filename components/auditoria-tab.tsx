@@ -20,7 +20,18 @@ import {
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { useToast } from "@/hooks/use-toast"
-import { AUDIT_PERMISSIONS, REVERSAL_REASONS, validateReversalReason } from "@/lib/audit"
+import {
+  AUDIT_PERMISSIONS,
+  REVERSAL_REASONS,
+  auditActionLabel,
+  auditModuleLabel,
+  auditOriginLabel,
+  auditReasonLabel,
+  auditStatusLabel,
+  auditTypeLabel,
+  stockMovementLabel,
+  validateReversalReason,
+} from "@/lib/audit"
 import {
   Dialog,
   DialogContent,
@@ -128,13 +139,6 @@ const STATUS_STYLES: Record<string, string> = {
   estornado: "border-destructive/25 bg-destructive/10 text-destructive",
   corrigido: "border-blue-500/25 bg-blue-500/10 text-blue-600 dark:text-blue-400",
   cancelado: "border-muted-foreground/25 bg-muted text-muted-foreground",
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  ativo: "Ativo",
-  estornado: "Estornado",
-  corrigido: "Corrigido",
-  cancelado: "Cancelado",
 }
 
 function formatDateTime(value?: string | null) {
@@ -594,7 +598,7 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
                   </td>
                   <td className="px-4 py-3.5">
                     <span className={`inline-flex rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-wider ${STATUS_STYLES[item.status_atual] || STATUS_STYLES.cancelado}`}>
-                      {STATUS_LABELS[item.status_atual] || item.status_atual}
+                      {auditStatusLabel(item.status_atual)}
                     </span>
                     {item.dados_legados && <p className="mt-1 text-[9px] font-bold text-amber-600">Dados legados</p>}
                   </td>
@@ -672,12 +676,12 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
               <section>
                 <h3 className="mb-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider text-foreground"><UserRound className="h-4 w-4 text-primary" /> Informações gerais</h3>
                 <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                  <DetailValue label="Módulo / Tipo" value={`${details.geral.modulo} · ${details.geral.tipo}`} />
+                  <DetailValue label="Módulo / Tipo" value={`${auditModuleLabel(details.geral.modulo)} · ${auditTypeLabel(details.geral.tipo)}`} />
                   <DetailValue label="Usuário / Operador" value={details.geral.usuario_nome} />
                   <DetailValue label="Data e hora" value={formatDateTime(details.geral.data_hora)} />
-                  <DetailValue label="Status" value={STATUS_LABELS[details.geral.status_atual] || details.geral.status_atual} />
+                  <DetailValue label="Status" value={auditStatusLabel(details.geral.status_atual)} />
                   <DetailValue label="Empresa / Tenant" value={details.geral.tenant_nome} />
-                  <DetailValue label="Origem" value={details.geral.origem} />
+                  <DetailValue label="Origem" value={auditOriginLabel(details.geral.origem)} />
                   <DetailValue label="Última alteração" value={formatDateTime(details.geral.ultima_alteracao)} />
                   <DetailValue label="Estornado por" value={details.geral.estornado_por || "—"} />
                 </div>
@@ -706,7 +710,7 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
                     <div key={movement.id} className="grid grid-cols-[1fr_auto] gap-3 border-b border-border px-4 py-3 text-xs last:border-0">
                       <div>
                         <p className="font-bold text-foreground">{movement.insumo_codigo} · {movement.insumo_descricao}</p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">{movement.tipo} · {movement.origem} · {formatDateTime(movement.created_at)}</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">{stockMovementLabel(movement.tipo)} · {auditOriginLabel(movement.origem)} · {formatDateTime(movement.created_at)}</p>
                       </div>
                       <p className="font-bold tabular-nums text-foreground">{formatQuantity(movement.quantidade)}</p>
                     </div>
@@ -720,9 +724,9 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
                   {details.historico.map((event, index) => (
                     <div key={`${event.action}-${event.occurred_at}-${index}`} className="relative pb-4 pl-4 last:pb-0">
                       <span className="absolute left-[-15px] top-1.5 h-2.5 w-2.5 rounded-full border-2 border-card bg-primary" />
-                      <p className="text-xs font-bold text-foreground">{event.action}</p>
+                      <p className="text-xs font-bold text-foreground">{auditActionLabel(event.action)}</p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">{formatDateTime(event.occurred_at)} · {event.performed_by || "Sistema"}</p>
-                      {event.reason && <p className="mt-1 text-[11px] text-foreground">Motivo: {event.reason}</p>}
+                      {event.reason && <p className="mt-1 text-[11px] text-foreground">Motivo: {auditReasonLabel(event.reason)}</p>}
                     </div>
                   ))}
                 </div>
