@@ -15,6 +15,15 @@ const ROTAS_RESTRITAS: Record<string, string[]> = {
 }
 
 export async function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname
+
+  // Esta rota recebe e valida explicitamente o Bearer token. Deixá-la passar
+  // aqui evita que uma sessão em renovação seja convertida em redirect HTML
+  // antes que o endpoint possa sincronizar o intervalo programado.
+  if (pathname === '/api/apontamentos/sincronizar-intervalo') {
+    return NextResponse.next()
+  }
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -39,8 +48,6 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-  const pathname = request.nextUrl.pathname
-
   const isPublic = PUBLIC_ROUTES.some(r => pathname.startsWith(r))
 
   if (isPublic) {
