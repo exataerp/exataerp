@@ -382,6 +382,9 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [processandoOverride, setProcessandoOverride] = useState(false)
   const [iniciandoApontamento, setIniciandoApontamento] = useState(false)
   const iniciandoApontamentoRef = useRef(false)
+  const [retomandoApontamentoId, setRetomandoApontamentoId] = useState<string | null>(null)
+  const transicaoCronometroRef = useRef(false)
+  const versaoSessoesRef = useRef(0)
   const sincronizandoIntervaloRef = useRef(false)
   const erroSincronizacaoIntervaloRef = useRef(false)
 
@@ -390,6 +393,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
   const [mapaDescricaoProdutos, setMapaDescricaoProdutos] = useState<Record<string, string>>({})
 
   const loadData = useCallback(async (silent = false) => {
+    const versaoSessoesAoIniciar = versaoSessoesRef.current
     if (!silent) setLoading(true)
     try {
       const [opsRes, apRes, gRes, postosRes] = await Promise.all([
@@ -548,10 +552,22 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
             intervaloFimTimestamp: eventoIntervalo?.scheduled_end_at ? new Date(eventoIntervalo.scheduled_end_at).getTime() : undefined,
           }
         })
-        setSessoes(sessoesBanco)
+        // Uma consulta iniciada antes do clique nao pode devolver a tela ao
+        // estado antigo enquanto o inicio/retomada esta sendo confirmado.
+        if (
+          !transicaoCronometroRef.current
+          && versaoSessoesAoIniciar === versaoSessoesRef.current
+        ) {
+          setSessoes(sessoesBanco)
+        }
       } else {
         setEventosOrdem([])
-        setSessoes([])
+        if (
+          !transicaoCronometroRef.current
+          && versaoSessoesAoIniciar === versaoSessoesRef.current
+        ) {
+          setSessoes([])
+        }
       }
 
       const salvo = localStorage.getItem(`exata_posto_trabalho_${empresaAtivaId}`)
@@ -606,7 +622,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
     let cancelado = false
     const sincronizar = async () => {
-      if (sincronizandoIntervaloRef.current) return
+      if (sincronizandoIntervaloRef.current || transicaoCronometroRef.current) return
       sincronizandoIntervaloRef.current = true
 
       try {
@@ -627,7 +643,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           }),
         })
 
-        if (cancelado) return
+        if (cancelado || transicaoCronometroRef.current) return
         if (!resposta.ok) {
           if (!erroSincronizacaoIntervaloRef.current) {
             console.error(
@@ -909,6 +925,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     }
 
     iniciandoApontamentoRef.current = true
+    transicaoCronometroRef.current = true
+    versaoSessoesRef.current += 1
     setIniciandoApontamento(true)
     setSessoes([sessaoPendente])
 
@@ -985,6 +1003,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       })
     } finally {
       iniciandoApontamentoRef.current = false
+      transicaoCronometroRef.current = false
+      versaoSessoesRef.current += 1
       setIniciandoApontamento(false)
     }
   }
@@ -1047,39 +1067,21 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     overrideIntervalo = false,
     justificativa?: string,
   ) => {
+    if (transicaoCronometroRef.current) return false
+
     const sessao = sessoes.find(s => s.apontamentoId === apontamentoId)
-    if (!sessao) return
+    if (!sessao) return false
 
-    const { data, error } = await supabase.rpc("retomar_apontamento", {
-      p_empresa_id: empresaAtivaId,
-      p_apontamento_id: apontamentoId,
-      p_override: overrideIntervalo,
-      p_justificativa: justificativa || null,
-    })
-
-    if (error) {
-      const ehBloqueioIntervalo = error.message.includes("intervalo programado")
-      if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
-        setSessaoEmAcaoId(apontamentoId)
-        setAcaoOverride("retomar")
-        setJustificativaOverride("")
-        setShowOverrideIntervalo(true)
-      }
-      toast({
-        title: ehBloqueioIntervalo ? "Retomada bloqueada durante o intervalo" : "Erro ao retomar a produção",
-        description: error.message,
-        variant: "destructive",
-      })
-      return
-    }
-
-    const retomadaTimestamp = new Date((data as any).resumed_at).getTime()
-    const segundosAcumulados = Number((data as any).total_seconds) || sessao.segundosAcumulados
-    const sessaoAtualizada: SessaoAtiva = {
+    const retomadaSolicitadaTimestamp = Date.now()
+    const milissegundosAcumulados = obterMilissegundosAcumulados(sessao)
+    const segundosAcumuladosOtimistas = Math.floor(
+      milissegundosAcumulados / MILISSEGUNDOS_POR_SEGUNDO,
+    )
+    const sessaoOtimista: SessaoAtiva = {
       ...sessao,
-      inicioTimestamp: retomadaTimestamp,
-      segundosAcumulados,
-      milissegundosAcumulados: segundosAcumulados * MILISSEGUNDOS_POR_SEGUNDO,
+      inicioTimestamp: retomadaSolicitadaTimestamp,
+      segundosAcumulados: segundosAcumuladosOtimistas,
+      milissegundosAcumulados,
       pausaInicioTimestamp: undefined,
       pausaId: undefined,
       estadoOperacao: "em_execucao",
@@ -1087,25 +1089,105 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       intervaloInicioTimestamp: undefined,
       intervaloFimTimestamp: undefined,
     }
-    salvarSessoes(sessoes.map(s => s.apontamentoId === sessao.apontamentoId ? sessaoAtualizada : s))
-    setShowOverrideIntervalo(false)
-    setAcaoOverride(null)
-    setJustificativaOverride("")
-    toast({ title: "Produção retomada" })
+
+    transicaoCronometroRef.current = true
+    versaoSessoesRef.current += 1
+    setRetomandoApontamentoId(apontamentoId)
+    setSessoes(atuais => atuais.map(item =>
+      item.apontamentoId === apontamentoId ? sessaoOtimista : item,
+    ))
+    setSegundosMap(atual => ({
+      ...atual,
+      [apontamentoId]: segundosAcumuladosOtimistas,
+    }))
+
+    const restaurarSessaoPausada = () => {
+      setSessoes(atuais => atuais.map(item =>
+        item.apontamentoId === apontamentoId ? sessao : item,
+      ))
+      setSegundosMap(atual => ({
+        ...atual,
+        [apontamentoId]: calcularSegundosDecorridos(sessao),
+      }))
+    }
+
+    try {
+      const { data, error } = await supabase.rpc("retomar_apontamento", {
+        p_empresa_id: empresaAtivaId,
+        p_apontamento_id: apontamentoId,
+        p_override: overrideIntervalo,
+        p_justificativa: justificativa || null,
+      })
+
+      if (error) {
+        restaurarSessaoPausada()
+        const ehBloqueioIntervalo = error.message.includes("intervalo programado")
+        if (ehBloqueioIntervalo && podeSobrescreverIntervalo && !overrideIntervalo) {
+          setSessaoEmAcaoId(apontamentoId)
+          setAcaoOverride("retomar")
+          setJustificativaOverride("")
+          setShowOverrideIntervalo(true)
+        }
+        toast({
+          title: ehBloqueioIntervalo ? "Retomada bloqueada durante o intervalo" : "Erro ao retomar a produção",
+          description: error.message,
+          variant: "destructive",
+        })
+        return false
+      }
+
+      const retomadaBancoTimestamp = new Date((data as any).resumed_at).getTime()
+      const retomadaTimestamp = Number.isFinite(retomadaBancoTimestamp)
+        ? retomadaBancoTimestamp
+        : retomadaSolicitadaTimestamp
+      const totalRecebido = Number((data as any).total_seconds)
+      const segundosAcumulados = Number.isFinite(totalRecebido)
+        ? Math.max(0, totalRecebido)
+        : sessao.segundosAcumulados
+      const sessaoAtualizada: SessaoAtiva = {
+        ...sessaoOtimista,
+        inicioTimestamp: retomadaTimestamp,
+        segundosAcumulados,
+        milissegundosAcumulados: segundosAcumulados * MILISSEGUNDOS_POR_SEGUNDO,
+      }
+      salvarSessoes(sessoes.map(s => s.apontamentoId === sessao.apontamentoId ? sessaoAtualizada : s))
+      setShowOverrideIntervalo(false)
+      setAcaoOverride(null)
+      setJustificativaOverride("")
+      toast({ title: "Produção retomada" })
+      return true
+    } catch (error) {
+      restaurarSessaoPausada()
+      toast({
+        title: "Erro ao retomar a produção",
+        description: error instanceof Error ? error.message : "Não foi possível retomar a operação.",
+        variant: "destructive",
+      })
+      return false
+    } finally {
+      transicaoCronometroRef.current = false
+      versaoSessoesRef.current += 1
+      setRetomandoApontamentoId(null)
+    }
   }
 
   const handleConfirmarOverride = async () => {
     if (justificativaOverride.trim().length < 5 || !acaoOverride) return
+    const acao = acaoOverride
+    const justificativa = justificativaOverride.trim()
+    const apontamentoId = sessaoEmAcaoId
     setProcessandoOverride(true)
+    // Fecha no clique; a tela principal ja mostra o cronometro otimista
+    // enquanto o servidor registra a autorizacao.
+    setShowOverrideIntervalo(false)
+    setAcaoOverride(null)
+    setJustificativaOverride("")
     try {
-      if (acaoOverride === "iniciar") {
-        await handleIniciar(operacaoSelecionadaId, true, justificativaOverride.trim())
-      } else if (sessaoEmAcaoId) {
-        await handleRetomar(sessaoEmAcaoId, true, justificativaOverride.trim())
+      if (acao === "iniciar") {
+        await handleIniciar(operacaoSelecionadaId, true, justificativa)
+      } else if (apontamentoId) {
+        await handleRetomar(apontamentoId, true, justificativa)
       }
-      setShowOverrideIntervalo(false)
-      setAcaoOverride(null)
-      setJustificativaOverride("")
     } finally {
       setProcessandoOverride(false)
     }
@@ -1432,6 +1514,8 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     : null
   const ritmo = iniciandoApontamento
     ? { label: "Iniciando operação", detalhe: "Cronômetro iniciado", cor: "#22c55e", texto: "text-green-600" }
+    : retomandoApontamentoId
+      ? { label: "Retomando operação", detalhe: "Cronômetro retomado", cor: "#22c55e", texto: "text-green-600" }
     : pausaIntervaloProgramado
     ? { label: "Pausada — intervalo programado", detalhe: "Pausa automática do sistema", cor: "#f59e0b", texto: "text-amber-500" }
     : aguardandoRetomada
@@ -1658,7 +1742,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           {sessaoAtiva && (
             <div className={"inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold " + (sessaoEmPausa ? "border-amber-500/25 bg-amber-500/10 text-amber-600" : "border-green-500/25 bg-green-500/10 text-green-600")}>
               <span className={"h-2 w-2 rounded-full " + (sessaoEmPausa ? "bg-amber-500" : "animate-pulse bg-green-500")} />
-              {iniciandoApontamento ? "Confirmando início" : sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
+              {iniciandoApontamento ? "Confirmando início" : retomandoApontamentoId ? "Confirmando retomada" : sessaoEmPausa ? "Operação pausada" : "Operação em andamento"}
             </div>
           )}
         </header>
@@ -2048,21 +2132,35 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                           {sessaoEmPausa ? (
                             <button
                               type="button"
+                              disabled={
+                                retomandoApontamentoId === sessaoAtiva.apontamentoId
+                                || (pausaIntervaloProgramado && !podeSobrescreverIntervalo)
+                              }
                               onClick={() => {
                                 setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
-                                handleRetomar(sessaoAtiva.apontamentoId)
+                                if (pausaIntervaloProgramado && podeSobrescreverIntervalo) {
+                                  setAcaoOverride("retomar")
+                                  setJustificativaOverride("")
+                                  setShowOverrideIntervalo(true)
+                                  return
+                                }
+                                void handleRetomar(sessaoAtiva.apontamentoId)
                               }}
-                              className={`flex h-14 items-center justify-center gap-2 rounded-2xl text-sm font-black text-white transition-colors ${pausaIntervaloProgramado && !podeSobrescreverIntervalo ? "cursor-not-allowed bg-muted text-muted-foreground" : "bg-green-600 hover:bg-green-500"}`}
+                              className={`flex h-14 items-center justify-center gap-2 rounded-2xl text-sm font-black text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${pausaIntervaloProgramado && !podeSobrescreverIntervalo ? "bg-muted text-muted-foreground" : "bg-green-600 hover:bg-green-500"}`}
                             >
                               <Play className="h-5 w-5 fill-current" />
-                              {pausaIntervaloProgramado && podeSobrescreverIntervalo ? "Retomar com autorização" : "Retomar operação"}
+                              {retomandoApontamentoId === sessaoAtiva.apontamentoId
+                                ? "Retomando..."
+                                : pausaIntervaloProgramado && podeSobrescreverIntervalo
+                                  ? "Retomar com autorização"
+                                  : "Retomar operação"}
                             </button>
                           ) : (
                             <button
                               type="button"
-                              disabled={iniciandoApontamento}
+                              disabled={iniciandoApontamento || !!retomandoApontamentoId}
                               onClick={() => {
-                                if (iniciandoApontamento) return
+                                if (iniciandoApontamento || retomandoApontamentoId) return
                                 setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
                                 grupos.length > 0
                                   ? setShowModalPausa(true)
@@ -2070,12 +2168,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
                               }}
                               className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-amber-500 text-sm font-black text-white transition-colors hover:bg-amber-400 disabled:cursor-wait disabled:opacity-40"
                             >
-                              <Pause className="h-5 w-5" /> {iniciandoApontamento ? "Confirmando início..." : "Pausar operação"}
+                              <Pause className="h-5 w-5" /> {iniciandoApontamento ? "Confirmando início..." : retomandoApontamentoId ? "Confirmando retomada..." : "Pausar operação"}
                             </button>
                           )}
                           <button
                             type="button"
-                            disabled={iniciandoApontamento || pausaIntervaloProgramado || aguardandoRetomada}
+                            disabled={iniciandoApontamento || !!retomandoApontamentoId || pausaIntervaloProgramado || aguardandoRetomada}
                             onClick={() => {
                               setSessaoEmAcaoId(sessaoAtiva.apontamentoId)
                               setShowModalFinalizar(true)
