@@ -11,6 +11,7 @@ import {
   chaveOcorrenciaIntervalo,
   devePausarNoIntervalo,
   excluirDeParadaMaquina,
+  resolverIntervaloProgramadoAtivo,
 } from "./scheduled-break-policy.ts"
 
 const turnoDia: TurnoProgramado = {
@@ -170,4 +171,58 @@ test("intervalos inativos e sobrepostos não distorcem o tempo planejado", () =>
       { start_time: "15:00", end_time: "16:00", days_of_week: ["2"], is_active: false },
     ],
   }, "2"), 7.5 * 3600)
+})
+
+test("17. intervalo no domingo respeita os dias escolhidos no intervalo", () => {
+  const ocorrencia = resolverIntervaloProgramadoAtivo({
+    agora: new Date("2026-08-02T23:46:00.000Z"), // domingo, 20:46 em Sao Paulo
+    timezone: "America/Sao_Paulo",
+    turnos: [{
+      id: "turno-2",
+      hora_inicio: "16:48",
+      hora_fim: "02:24",
+      pausar_ops_intervalos: true,
+      intervalos: [{
+        id: "intervalo-domingo",
+        schedule_id: "turno-2",
+        name: "Intervalo",
+        start_time: "20:45",
+        end_time: "20:50",
+        days_of_week: ["0"],
+        pause_operations_automatically: true,
+        is_active: true,
+      }],
+    }],
+  })
+
+  assert.equal(ocorrencia?.dataJornada, "2026-08-02")
+  assert.equal(ocorrencia?.inicio.toISOString(), "2026-08-02T23:45:00.000Z")
+  assert.equal(ocorrencia?.fim.toISOString(), "2026-08-02T23:50:00.000Z")
+})
+
+test("18. intervalo apos meia-noite pertence ao dia inicial da jornada noturna", () => {
+  const ocorrencia = resolverIntervaloProgramadoAtivo({
+    agora: new Date("2026-08-04T05:05:00.000Z"), // terca 02:05, jornada iniciada na segunda
+    timezone: "America/Sao_Paulo",
+    turnos: [{
+      id: "turno-noite",
+      hora_inicio: "22:00",
+      hora_fim: "06:00",
+      pausar_ops_intervalos: true,
+      intervalos: [{
+        id: "intervalo-noite",
+        schedule_id: "turno-noite",
+        name: "Ceia",
+        start_time: "02:00",
+        end_time: "02:10",
+        days_of_week: ["1"],
+        pause_operations_automatically: true,
+        is_active: true,
+      }],
+    }],
+  })
+
+  assert.equal(ocorrencia?.dataJornada, "2026-08-03")
+  assert.equal(ocorrencia?.inicio.toISOString(), "2026-08-04T05:00:00.000Z")
+  assert.equal(ocorrencia?.fim.toISOString(), "2026-08-04T05:10:00.000Z")
 })

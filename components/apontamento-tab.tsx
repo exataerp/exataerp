@@ -610,22 +610,37 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       sincronizandoIntervaloRef.current = true
 
       try {
-        const { data, error } = await supabase.rpc("sincronizar_intervalo_programado_apontamento", {
-          p_empresa_id: empresaAtivaId,
-          p_apontamento_id: apontamentoAtivoId,
+        const { data: sessaoAuth } = await supabase.auth.getSession()
+        const accessToken = sessaoAuth.session?.access_token
+        if (!accessToken) return
+
+        const resposta = await fetch("/api/apontamentos/sincronizar-intervalo", {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            empresaId: empresaAtivaId,
+            apontamentoId: apontamentoAtivoId,
+          }),
         })
 
         if (cancelado) return
-        if (error) {
+        if (!resposta.ok) {
           if (!erroSincronizacaoIntervaloRef.current) {
-            console.error("Falha ao sincronizar intervalo programado:", error)
+            console.error(
+              "Falha ao sincronizar intervalo programado:",
+              await resposta.text(),
+            )
             erroSincronizacaoIntervaloRef.current = true
           }
           return
         }
 
         erroSincronizacaoIntervaloRef.current = false
-        const resultado = data as {
+        const resultado = await resposta.json() as {
           alterado?: boolean
           estado?: SessaoAtiva["estadoOperacao"]
           total_segundos?: number
