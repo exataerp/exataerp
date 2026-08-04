@@ -837,12 +837,12 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
 
       for (let inicio = 0; ; inicio += tamanhoPagina) {
         const { data: vinculos, error: erroVinculos } = await supabase
-          .from("operacao_postos_trabalho")
-          .select("operacao:operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(produto:produtos!operacoes_produto_id_fkey!inner(codigo))")
+          .from("ordem_producao_operacoes")
+          .select("ordem:ordens_producao!ordem_producao_operacoes_ordem_id_fkey!inner(produto_codigo, status)")
           .eq("empresa_id", empresaAtivaId)
-          .eq("maquina_id", postoSelecionadoId)
-          .eq("ativo", true)
-          .order("operacao_id", { ascending: true })
+          .contains("maquinas_ids", [postoSelecionadoId])
+          .not("ordem.status", "in", '("encerrada","cancelada","cancelado")')
+          .order("ordem_id", { ascending: true })
           .range(inicio, inicio + tamanhoPagina - 1)
 
         if (cancelado) return
@@ -854,7 +854,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         }
 
         for (const vinculo of vinculos || []) {
-          const codigo = (vinculo as any).operacao?.produto?.codigo
+          const codigo = (vinculo as any).ordem?.produto_codigo
           if (codigo) codigos.add(codigo)
         }
 
@@ -888,27 +888,13 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
       setLoadingOps(true)
 
       try {
-        const { data: produto } = await supabase
-          .from("produtos")
-          .select("id")
-          .eq("codigo", ordem.produto_codigo)
-          .eq("empresa_id", empresaAtivaId!)
-          .single()
-
-        if (cancelado) return
-        if (!produto) {
-          setOperacoes([])
-          return
-        }
-
         const { data: operacoesDoPosto, error } = await supabase
-          .from("operacao_postos_trabalho")
-          .select("operacao_id, operacoes!operacao_postos_trabalho_operacao_id_fkey!inner(id, nome, maquina_id, ordem, produto_id)")
+          .from("ordem_producao_operacoes")
+          .select("operacao_id, operacao_nome, maquina_id, sequencia")
           .eq("empresa_id", empresaAtivaId!)
-          .eq("maquina_id", postoSelecionadoId)
-          .eq("ativo", true)
-          .eq("operacoes.produto_id", produto.id)
-          .order("ordem", { foreignTable: "operacoes" })
+          .eq("ordem_id", ordem.id)
+          .contains("maquinas_ids", [postoSelecionadoId])
+          .order("sequencia")
 
         if (cancelado) return
         if (error) {
@@ -918,10 +904,10 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
         }
 
         const operacoesFormatadas: Operacao[] = (operacoesDoPosto || []).map((item: any) => ({
-          id: item.operacoes.id,
-          nome: item.operacoes.nome,
-          maquina_id: item.operacoes.maquina_id,
-          ordem: item.operacoes.ordem,
+          id: item.operacao_id,
+          nome: item.operacao_nome,
+          maquina_id: item.maquina_id ?? postoSelecionadoId,
+          ordem: item.sequencia,
         }))
 
         setOperacoes(operacoesFormatadas)
@@ -988,6 +974,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
     }
 
     const inicioSolicitadoTimestamp = Date.now()
+    const commandId = crypto.randomUUID()
     const maquinaIdDefinitiva = postoSelecionadoId
     const sessaoPendente: SessaoAtiva = {
       apontamentoId: `pendente-${inicioSolicitadoTimestamp}`,
@@ -1040,6 +1027,7 @@ export function ApontamentoTab({ empresaAtivaId }: { empresaAtivaId?: string | n
           p_maquina_id: postoSelecionadoId,
           p_override: overrideIntervalo,
           p_justificativa: justificativa || null,
+          p_command_id: commandId,
         }),
       ])
 

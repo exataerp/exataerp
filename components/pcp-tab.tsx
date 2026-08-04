@@ -16,6 +16,18 @@ import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/components/supabase"
 import { DatePicker } from "@/components/date-picker"
 import { Skeleton } from "@/components/ui/skeleton"
+import { calculatePlannedOrderSeconds } from "@/lib/production-metrics"
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  decideOrderDeletion,
+  ORDER_WITH_POINTINGS_MESSAGE,
+  summarizeOrderPointings,
+  type OrderDeletionDecision,
+  type OrderDeletionSummary,
+  type OrderPointingForDeletion,
+} from "@/lib/order-deletion"
 
 const DEFAULT_SHIFT_CAPACITY_SECONDS = 29880
 
@@ -41,6 +53,7 @@ interface SupabaseOperacao {
   unidade: "minutes" | "seconds"
   setup_time?: number
   maquina_id?: string
+  ativo?: boolean
 }
 
 interface SupabaseProduto {
@@ -57,6 +70,10 @@ interface SupabaseOrdem {
   quantidade: number
   regra_calculo: "soma" | "media" | "gargalo"
   agrupar_setup: boolean
+  status: string
+  quantidade_produzida: number
+  quantidade_aprovada: number
+  quantidade_aprovada_estoque: number
 }
 
 interface SupabaseCapacidade {
@@ -94,6 +111,38 @@ interface ProductionOrder {
   quantity: number
   calculationRule: "soma" | "media" | "gargalo"
   groupSetup: boolean
+  status: string
+  quantityProduced: number
+  quantityApproved: number
+  quantityStocked: number
+  deletionSummary: OrderDeletionSummary
+}
+
+interface BlockedOrder {
+  order: ProductionOrder
+  decision: OrderDeletionDecision
+}
+
+interface DeleteOrderRpcResult {
+  success?: boolean
+  code?: string
+  message?: string
+  audit_log_id?: string
+  dependencies?: {
+    total_apontamentos?: number
+    apontamentos_ativos?: number
+    apontamentos_pausados?: number
+    apontamentos_finalizados?: number
+    apontamentos_estornados?: number
+    usuarios?: Array<{ id?: string; nome?: string }>
+    primeiro_apontamento?: string | null
+    ultimo_apontamento?: string | null
+    pausas?: number
+    refugos?: number
+    movimentos_estoque?: number
+    eventos_produtivos?: number
+    utilizado_no_oee?: boolean
+  }
 }
 
 interface DailyCapacity {
@@ -174,7 +223,41 @@ function formatMinutes(sec: number): string {
   return r === 0 ? `${h}h` : `${h}h ${r}min`
 }
 
-export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
+function formatDateTime(value: string | null): string {
+  if (!value) return "—"
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString("pt-BR")
+}
+
+function summaryFromRpc(
+  dependencies: DeleteOrderRpcResult["dependencies"],
+  fallback: OrderDeletionSummary,
+): OrderDeletionSummary {
+  if (!dependencies) return fallback
+  return {
+    total: Number(dependencies.total_apontamentos ?? fallback.total),
+    active: Number(dependencies.apontamentos_ativos ?? fallback.active),
+    paused: Number(dependencies.apontamentos_pausados ?? fallback.paused),
+    finalized: Number(dependencies.apontamentos_finalizados ?? fallback.finalized),
+    reversed: Number(dependencies.apontamentos_estornados ?? fallback.reversed),
+    events: Number(dependencies.eventos_produtivos ?? fallback.events),
+    users: (dependencies.usuarios ?? []).map((user) => user.nome ?? user.id ?? "Usuário não identificado"),
+    firstPointing: dependencies.primeiro_apontamento ?? fallback.firstPointing,
+    lastPointing: dependencies.ultimo_apontamento ?? fallback.lastPointing,
+    pauses: Number(dependencies.pausas ?? fallback.pauses),
+    scraps: Number(dependencies.refugos ?? fallback.scraps),
+    movements: Number(dependencies.movimentos_estoque ?? fallback.movements),
+    usesOee: Boolean(dependencies.utilizado_no_oee ?? fallback.usesOee),
+  }
+}
+
+export function PCPTab({
+  empresaAtivaId,
+  onOpenAudit,
+}: {
+  empresaAtivaId?: string | null
+  onOpenAudit?: () => void
+}) {
   const { toast } = useToast()
 
   const [products, setProducts] = useState<Product[]>([])
@@ -182,6 +265,10 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   const [capacities, setCapacities] = useState<DailyCapacity[]>([])
   const [machines, setMachines] = useState<Machine[]>([])
   const [loading, setLoading] = useState(true)
+  const [blockedOrder, setBlockedOrder] = useState<BlockedOrder | null>(null)
+  const [orderToDelete, setOrderToDelete] = useState<ProductionOrder | null>(null)
+  const [deleteReason, setDeleteReason] = useState("")
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null)
 
   const [viewMode, setViewMode] = useState<"kanban" | "calendario" | "lista">("kanban")
   const [excecoesAbertas, setExcecoesAbertas] = useState(false)
@@ -244,12 +331,32 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
     setLoading(true)
     try {
       const qMaquinas = supabase.from("maquinas").select("*").eq("empresa_id", empresaAtivaId)
-      const qProdutos = supabase.from("produtos").select("*, operacoes(*)").eq("empresa_id", empresaAtivaId)
+      const qProdutos = supabase.from("produtos").select("*, operacoes(*)").eq("empresa_id", empresaAtivaId).eq("ativo", true)
       const qOrdens = supabase.from("ordens_producao").select("*").eq("empresa_id", empresaAtivaId)
       const qCapacidade = supabase.from("capacidade_diaria").select("*").eq("empresa_id", empresaAtivaId)
+      const qApontamentos = supabase.from("apontamentos")
+        .select("id,ordem_id,user_id,status,estado_operacao,finalizado_em,estornado_em,cronometro_inicio,created_at,updated_at,cronometro_total_segundos,pecas_produzidas,pecas_refugo,pecas_retrabalho")
+        .eq("empresa_id", empresaAtivaId)
+      const qEventos = supabase.from("production_order_events")
+        .select("production_order_id")
+        .eq("tenant_id", empresaAtivaId)
+      const qPausas = supabase.from("apontamento_pausas")
+        .select("apontamento_id")
+        .eq("empresa_id", empresaAtivaId)
+      const qMovimentos = supabase.from("movimentacoes_estoque")
+        .select("referencia_id,reversal_apontamento_id")
+        .eq("empresa_id", empresaAtivaId)
+      const qPerfis = supabase.from("perfis")
+        .select("user_id,nome,email")
+        .eq("empresa_id", empresaAtivaId)
 
-      const [{ data: maqData }, { data: prodsData }, { data: opsData }, { data: capData }] = await Promise.all([
-        qMaquinas, qProdutos, qOrdens, qCapacidade
+      const [
+        { data: maqData }, { data: prodsData }, { data: opsData }, { data: capData },
+        { data: apontamentosData }, { data: eventosData }, { data: pausasData },
+        { data: movimentosData }, { data: perfisData },
+      ] = await Promise.all([
+        qMaquinas, qProdutos, qOrdens, qCapacidade, qApontamentos, qEventos,
+        qPausas, qMovimentos, qPerfis,
       ])
 
       setMachines((maqData as SupabaseMaquina[]) || [])
@@ -257,13 +364,24 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
       setProducts(((prodsData as SupabaseProduto[]) || []).map((p) => ({
         code: p.codigo,
         description: p.descricao,
-        steps: (p.operacoes || []).map((op) => ({
+        steps: (p.operacoes || []).filter(op => op.ativo !== false).map((op) => ({
           name: op.nome,
           cycleTime: op.unidade === "minutes" ? Number(op.tempo) * 60 : Number(op.tempo),
           setupTime: op.unidade === "minutes" ? Number(op.setup_time || 0) * 60 : Number(op.setup_time || 0),
           maquina_id: op.maquina_id
         }))
       })))
+
+      const pointings = (apontamentosData ?? []) as OrderPointingForDeletion[]
+      const eventsByOrder = new Map<string, number>()
+      for (const event of eventosData ?? []) {
+        const orderId = event.production_order_id as string | null
+        if (orderId) eventsByOrder.set(orderId, (eventsByOrder.get(orderId) ?? 0) + 1)
+      }
+      const userNames = new Map<string, string>()
+      for (const profile of perfisData ?? []) {
+        if (profile.user_id) userNames.set(profile.user_id, profile.nome ?? profile.email ?? profile.user_id)
+      }
 
       setOrders(((opsData as SupabaseOrdem[]) || []).map((op) => ({
         id: op.id,
@@ -272,7 +390,21 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
         productCode: op.produto_codigo,
         quantity: op.quantidade,
         calculationRule: op.regra_calculo,
-        groupSetup: op.agrupar_setup
+        groupSetup: op.agrupar_setup,
+        status: op.status,
+        quantityProduced: Number(op.quantidade_produzida ?? 0),
+        quantityApproved: Number(op.quantidade_aprovada ?? 0),
+        quantityStocked: Number(op.quantidade_aprovada_estoque ?? 0),
+        deletionSummary: summarizeOrderPointings(
+          op.id,
+          pointings,
+          eventsByOrder.get(op.id) ?? 0,
+          {
+            userNames,
+            pauses: pausasData ?? [],
+            movements: movimentosData ?? [],
+          },
+        ),
       })))
 
       setCapacities(((capData as SupabaseCapacidade[]) || []).map((c) => ({
@@ -293,13 +425,16 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
   const calculateOPTime = (op: ProductionOrder): number => {
     const product = products.find((p) => p.code === op.productCode)
     if (!product || product.steps.length === 0) return 0
-    const cycleTimes = product.steps.map((s) => s.cycleTime)
-    let baseTime = 0
-    if (op.calculationRule === "soma") baseTime = cycleTimes.reduce((a, b) => a + b, 0)
-    else if (op.calculationRule === "media") baseTime = cycleTimes.reduce((a, b) => a + b, 0) / cycleTimes.length
-    else if (op.calculationRule === "gargalo") baseTime = Math.max(...cycleTimes)
-    const totalSetup = op.groupSetup ? 0 : product.steps.reduce((a, b) => a + b.setupTime, 0)
-    return op.quantity * baseTime + totalSetup
+    return calculatePlannedOrderSeconds(
+      product.steps.map(step => ({
+        name: step.name,
+        time: step.cycleTime,
+        setupTime: step.setupTime,
+        unit: "seconds" as const,
+      })),
+      op.quantity,
+      op.groupSetup,
+    )
   }
 
   const getMachineCap = (mId: string, dateStr: string): number => {
@@ -464,7 +599,12 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
       setOrders(prev => [...prev, {
         id: data[0].id, opNumber: data[0].numero_op, date: data[0].data_programacao,
         productCode: data[0].produto_codigo, quantity: data[0].quantidade,
-        calculationRule: data[0].regra_calculo, groupSetup: data[0].agrupar_setup
+        calculationRule: data[0].regra_calculo, groupSetup: data[0].agrupar_setup,
+        status: data[0].status,
+        quantityProduced: Number(data[0].quantidade_produzida ?? 0),
+        quantityApproved: Number(data[0].quantidade_aprovada ?? 0),
+        quantityStocked: Number(data[0].quantidade_aprovada_estoque ?? 0),
+        deletionSummary: summarizeOrderPointings(data[0].id, []),
       }])
       setOpNumber("")
       setOpQuantity("")
@@ -472,9 +612,59 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
     }
   }
 
-  const handleRemoveOP = async (id: string) => {
-    const { error } = await supabase.from("ordens_producao").delete().eq("id", id)
-    if (!error) { setOrders(orders.filter((o) => o.id !== id)); toast({ title: "OP Removida" }) }
+  const requestRemoveOP = (order: ProductionOrder) => {
+    const decision = decideOrderDeletion({
+      status: order.status,
+      quantityProduced: order.quantityProduced,
+      quantityApproved: order.quantityApproved,
+      quantityStocked: order.quantityStocked,
+      summary: order.deletionSummary,
+    })
+    if (decision.blocked) {
+      setBlockedOrder({ order, decision })
+      return
+    }
+    setDeleteReason("")
+    setOrderToDelete(order)
+  }
+
+  const handleRemoveOP = async () => {
+    if (!empresaAtivaId || !orderToDelete || deletingOrderId) return
+    const order = orderToDelete
+    setDeletingOrderId(order.id)
+    const { data, error } = await supabase.rpc("excluir_ordem_producao_segura", {
+      p_empresa_id: empresaAtivaId,
+      p_ordem_id: order.id,
+      p_motivo: deleteReason.trim(),
+      p_confirmar: true,
+      p_idempotency_key: crypto.randomUUID(),
+    })
+    setDeletingOrderId(null)
+    if (error) {
+      toast({ title: "Não foi possível excluir a OP", description: error.message, variant: "destructive" })
+      return
+    }
+    const result = data as DeleteOrderRpcResult | null
+    if (!result?.success) {
+      const updatedOrder = {
+        ...order,
+        deletionSummary: summaryFromRpc(result?.dependencies, order.deletionSummary),
+      }
+      setOrders((current) => current.map((item) => item.id === order.id ? updatedOrder : item))
+      setOrderToDelete(null)
+      setBlockedOrder({
+        order: updatedOrder,
+        decision: {
+          blocked: true,
+          code: result?.code === "OP_HAS_POINTINGS" ? "OP_HAS_POINTINGS" : "OP_HAS_OPERATIONAL_HISTORY",
+          message: result?.message ?? "A OP possui histórico e não pode ser excluída.",
+        },
+      })
+      return
+    }
+    setOrders((current) => current.filter((item) => item.id !== order.id))
+    setOrderToDelete(null)
+    toast({ title: "Rascunho excluído", description: "A exclusão foi registrada na auditoria." })
   }
 
   const handleSaveDowntime = async () => {
@@ -1041,8 +1231,14 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-mono font-bold text-foreground">{formatMinutes(opTime)}</span>
-                    <button onClick={() => handleRemoveOP(op.id)} className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                      <Trash2 className="h-4 w-4" />
+                    <button
+                      type="button"
+                      onClick={() => requestRemoveOP(op)}
+                      disabled={deletingOrderId === op.id}
+                      title={op.deletionSummary.total > 0 ? "Exclusão bloqueada: a OP possui apontamentos" : "Solicitar exclusão do rascunho"}
+                      className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                    >
+                      {op.deletionSummary.total > 0 ? <ShieldAlert className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
                     </button>
                   </div>
                 </div>
@@ -1053,6 +1249,78 @@ export function PCPTab({ empresaAtivaId }: { empresaAtivaId?: string | null }) {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={blockedOrder !== null} onOpenChange={(open) => { if (!open) setBlockedOrder(null) }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-destructive">
+                <ShieldAlert className="h-5 w-5" /> Exclusão física bloqueada
+              </DialogTitle>
+              <DialogDescription className="text-left leading-relaxed">
+                {blockedOrder?.decision.code === "OP_HAS_POINTINGS"
+                  ? ORDER_WITH_POINTINGS_MESSAGE
+                  : blockedOrder?.decision.message}
+              </DialogDescription>
+            </DialogHeader>
+            {blockedOrder && (
+              <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/20 p-4 text-sm sm:grid-cols-4">
+                <div><span className="text-muted-foreground">Apontamentos</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.total}</strong></div>
+                <div><span className="text-muted-foreground">Ativos</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.active}</strong></div>
+                <div><span className="text-muted-foreground">Pausados</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.paused}</strong></div>
+                <div><span className="text-muted-foreground">Finalizados</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.finalized}</strong></div>
+                <div><span className="text-muted-foreground">Estornados</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.reversed}</strong></div>
+                <div><span className="text-muted-foreground">Pausas</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.pauses}</strong></div>
+                <div><span className="text-muted-foreground">Refugo</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.scraps}</strong></div>
+                <div><span className="text-muted-foreground">Movimentos</span><strong className="block text-lg">{blockedOrder.order.deletionSummary.movements}</strong></div>
+                <div className="col-span-2"><span className="text-muted-foreground">Primeiro apontamento</span><strong className="block">{formatDateTime(blockedOrder.order.deletionSummary.firstPointing)}</strong></div>
+                <div className="col-span-2"><span className="text-muted-foreground">Último apontamento</span><strong className="block">{formatDateTime(blockedOrder.order.deletionSummary.lastPointing)}</strong></div>
+                <div className="col-span-2"><span className="text-muted-foreground">Usuários</span><strong className="block break-words">{blockedOrder.order.deletionSummary.users.join(", ") || "—"}</strong></div>
+                <div><span className="text-muted-foreground">Eventos</span><strong className="block">{blockedOrder.order.deletionSummary.events}</strong></div>
+                <div><span className="text-muted-foreground">Usado no OEE</span><strong className="block">{blockedOrder.order.deletionSummary.usesOee ? "Sim" : "Não"}</strong></div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setBlockedOrder(null)}>Fechar</Button>
+              {onOpenAudit && (
+                <Button type="button" onClick={() => { setBlockedOrder(null); onOpenAudit() }}>
+                  <ShieldAlert className="mr-2 h-4 w-4" /> Abrir auditoria
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={orderToDelete !== null} onOpenChange={(open) => { if (!open && !deletingOrderId) setOrderToDelete(null) }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Excluir rascunho da OP {orderToDelete?.opNumber}?</DialogTitle>
+              <DialogDescription className="text-left leading-relaxed">
+                Esta ação só é permitida para rascunho nunca iniciado e sem apontamentos, pausas, movimentos, eventos ou quantidades produzidas. O banco fará uma nova validação transacional e registrará a auditoria.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="delete-op-reason">Motivo da exclusão</Label>
+              <Input
+                id="delete-op-reason"
+                value={deleteReason}
+                onChange={(event) => setDeleteReason(event.target.value)}
+                placeholder="Informe ao menos 5 caracteres"
+                disabled={Boolean(deletingOrderId)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={Boolean(deletingOrderId)} onClick={() => setOrderToDelete(null)}>Cancelar</Button>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={deleteReason.trim().length < 5 || Boolean(deletingOrderId)}
+                onClick={handleRemoveOP}
+              >
+                {deletingOrderId ? "Validando…" : "Confirmar exclusão do rascunho"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
     </div>
   )

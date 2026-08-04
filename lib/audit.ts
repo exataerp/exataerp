@@ -26,6 +26,7 @@ export const REVERSAL_REASONS = [
 const AUDIT_ACTION_LABELS: Record<string, string> = {
   created: "Lançamento criado",
   start: "Apontamento iniciado",
+  production_report_started: "Apontamento de produção iniciado",
   production_report_finalized: "Apontamento de produção finalizado",
   production_report_reversed: "Apontamento de produção estornado",
   production_order_reopened: "Ordem de produção reaberta",
@@ -115,7 +116,7 @@ export function auditTypeLabel(value: unknown) {
 }
 
 export function auditOriginLabel(value: unknown) {
-  return AUDIT_ORIGIN_LABELS[normalizedCode(value)] ?? "Sistema"
+  return AUDIT_ORIGIN_LABELS[normalizedCode(value)] ?? "Origem não registrada (legado)"
 }
 
 export function stockMovementLabel(value: unknown) {

@@ -9,6 +9,7 @@ import { EmptyState as EmptyStateBase } from "@/components/empty-state"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DatePicker } from "@/components/date-picker"
 import { isValidOperationalEntry } from "@/lib/audit"
+import { aggregateOeeInputs, calculateOee } from "@/lib/production-metrics"
 import {
   calcularCicloRealVsPlanejado,
   calcularResumoCiclo,
@@ -406,8 +407,14 @@ export function RelatoriosTab({
           .eq("ativo", true),
       ])
 
+      const ordensValidas = new Set(((op || []) as OrdemProducao[]).map(item => item.id))
+      const operacoesValidas = new Set(((oc || []) as Operacao[]).map(item => item.id))
+      const maquinasValidas = new Set(((mq || []) as Maquina[]).map(item => item.id))
       const apontamentosValidos = ((ap || []) as Apontamento[]).filter(item =>
-        isValidOperationalEntry(item.status),
+        isValidOperationalEntry(item.status)
+        && ordensValidas.has(item.ordem_id)
+        && Boolean(item.operacao_id && operacoesValidas.has(item.operacao_id))
+        && Boolean(item.maquina_id && maquinasValidas.has(item.maquina_id)),
       )
       const idsValidos = new Set(apontamentosValidos.map(item => item.id))
       setApontamentos(apontamentosValidos)
@@ -505,10 +512,6 @@ export function RelatoriosTab({
 
       // O cronômetro já deixa de acumular enquanto o apontamento está pausado.
       // Subtrair as pausas novamente reduziria o tempo produtivo duas vezes.
-      const disponibilidade = tempoDisponivelTotal > 0
-        ? Math.min(100, (tempoRodando / tempoDisponivelTotal) * 100)
-        : 0
-
       let apontamentosSemCiclo = 0
       let tempoTeorico = 0
       const apontamentosComProducao = apsMAq.filter(a => (a.pecas_produzidas || 0) > 0)
@@ -534,15 +537,18 @@ export function RelatoriosTab({
         apontamentosSemCiclo === 0 &&
         tempoRodando > 0 &&
         tempoTeorico > 0
-      const performance = performanceCalculavel
-        ? Math.min(100, (tempoTeorico / tempoRodando) * 100)
-        : 0
-
-      const qualidade = totalProduzidas > 0 ? Math.max(0, (totalBoas / totalProduzidas) * 100) : 0
-      const oeeCalculavel = tempoDisponivelTotal > 0 && performanceCalculavel && totalProduzidas > 0
-      const oee = oeeCalculavel
-        ? (disponibilidade / 100) * (performance / 100) * (qualidade / 100) * 100
-        : 0
+      const resultadoOee = calculateOee({
+        scheduledSeconds: tempoDisponivelTotal,
+        runningSeconds: tempoRodando,
+        theoreticalSeconds: performanceCalculavel ? tempoTeorico : 0,
+        totalUnits: totalProduzidas,
+        goodUnits: totalBoas,
+      })
+      const disponibilidade = resultadoOee.availability
+      const performance = resultadoOee.performance
+      const qualidade = resultadoOee.quality
+      const oeeCalculavel = resultadoOee.calculable
+      const oee = resultadoOee.oee
 
       // Flags de dados insuficientes
       const avisos: string[] = []
@@ -571,6 +577,8 @@ export function RelatoriosTab({
         totalBoas,
         totalRefugo,
         tempoRodando,
+        tempoDisponivelTotal,
+        tempoTeorico,
         avisos,
         performanceCalculavel,
         oeeCalculavel,
@@ -725,9 +733,14 @@ export function RelatoriosTab({
     const dadosOEECalculaveis = dadosOEE.filter(d => d.oeeCalculavel)
     const temBaseOEE = dadosOEECalculaveis.length > 0
     const taxaRefugo = temBaseRefugo ? (totalRefugo / totalProcessadas) * 100 : 0
-    const oeeGeral = temBaseOEE
-      ? dadosOEECalculaveis.reduce((s, d) => s + d.oee, 0) / dadosOEECalculaveis.length
-      : 0
+    const baseOeeGeral = aggregateOeeInputs(dadosOEECalculaveis.map(d => ({
+      scheduledSeconds: d.tempoDisponivelTotal,
+      runningSeconds: d.tempoRodando,
+      theoreticalSeconds: d.tempoTeorico,
+      totalUnits: d.totalProduzidas,
+      goodUnits: d.totalBoas,
+    })))
+    const oeeGeral = temBaseOEE ? calculateOee(baseOeeGeral).oee : 0
     return { totalProduzidas, totalRefugo, totalRetrabalho, totalSegundos, totalPausaSeg, temBaseRefugo, temBaseOEE, taxaRefugo, oeeGeral }
   }, [filteredApontamentos, pausas, dadosOEE, ordens])
 
