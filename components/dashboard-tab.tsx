@@ -148,7 +148,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .select("codigo, descricao")
           .eq("empresa_id", empresaAtivaId),
         supabase.from("apontamentos")
-          .select("id, maquina_id, status, estado_operacao, created_at")
+          .select("id, ordem_id, operacao_id, maquina_id, status, estado_operacao, created_at")
           .eq("empresa_id", empresaAtivaId)
           .eq("status", "em_andamento"),
         supabase.from("apontamento_pausas")
@@ -156,11 +156,19 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
           .eq("empresa_id", empresaAtivaId)
           .is("fim", null),
         supabase.from("operacoes")
-          .select("id, maquina_id"),
+          .select("id, maquina_id")
+          .eq("empresa_id", empresaAtivaId),
       ])
 
+      const ordensValidas = new Set(((ops || []) as OrdemProducao[]).map(item => item.id))
+      const operacoesValidas = new Set(((opsData || []) as { id: string }[]).map(item => item.id))
+      const maquinasValidas = new Set(((mqs || []) as Maquina[]).map(item => item.id))
+      const possuiCadeiaValida = (item: Apontamento) =>
+        ordensValidas.has(item.ordem_id)
+        && Boolean(item.operacao_id && operacoesValidas.has(item.operacao_id))
+        && Boolean(item.maquina_id && maquinasValidas.has(item.maquina_id))
       const apontamentosValidos = ((aps || []) as Apontamento[]).filter(item =>
-        isValidOperationalEntry(item.status),
+        isValidOperationalEntry(item.status) && possuiCadeiaValida(item),
       )
       const idsValidos = new Set(apontamentosValidos.map(item => item.id))
 
@@ -173,7 +181,7 @@ export function DashboardTab({ empresaAtivaId }: { empresaAtivaId: string | null
         insumo: s.insumos,
       })) as SaldoEstoque[])
       setPausas(((pss || []) as Pausa[]).filter(item => idsValidos.has(item.apontamento_id)))
-      setApontamentosAtivos((apsAtivos || []) as Apontamento[])
+      setApontamentosAtivos(((apsAtivos || []) as Apontamento[]).filter(possuiCadeiaValida))
       setPausasAbertas((pssAbertas || []) as Pausa[])
       setOperacoes((opsData || []) as { id: string; maquina_id?: string }[])
 

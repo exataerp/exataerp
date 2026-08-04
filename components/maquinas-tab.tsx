@@ -153,11 +153,15 @@ export function MaquinasTab({ user, empresaAtivaId }: { user: any, empresaAtivaI
     if (!empresaAtivaId) return
 
     try {
-      const { error } = await supabase.from("maquinas").delete().eq("id", id).eq("empresa_id", empresaAtivaId)
+      const { error } = await supabase
+        .from("maquinas")
+        .update({ status: "inativa" })
+        .eq("id", id)
+        .eq("empresa_id", empresaAtivaId)
       if (error) throw error
       
       setMaquinas(maquinas.filter(m => m.id !== id))
-      toast({ title: "Máquina removida", description: "O recurso foi excluído do sistema." })
+      toast({ title: "Máquina inativada", description: "O recurso foi retirado de uso e o histórico foi preservado." })
     } catch (e: any) {
       toast({ title: "Erro ao excluir", description: "Não foi possível remover a máquina.", variant: "destructive" })
     }

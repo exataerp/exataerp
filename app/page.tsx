@@ -1042,7 +1042,7 @@ export default function ExataApp() {
 
             {canAccessActiveTab && activeTab === "pcp" && (
               <div className="animate-in fade-in duration-300">
-                <PCPTab empresaAtivaId={empresaAtivaId} />
+                <PCPTab empresaAtivaId={empresaAtivaId} onOpenAudit={() => setActiveTab("auditoria")} />
               </div>
             )}
 

@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Clock, Layers, Activity, AlertTriangle, Timer } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { calculateRouteMetrics, secondsToTime } from "@/lib/production-metrics"
 
 interface Operation {
   id: string
@@ -32,24 +33,12 @@ export function CalculationsDashboard({
 }: CalculationsDashboardProps) {
   if (!operations.length) return null
 
-  const convertToSeconds = (time: number, unit: "minutes" | "seconds") => (unit === "minutes" ? time * 60 : time)
-  const convertFromSeconds = (timeSec: number, targetUnit: "minutes" | "seconds") =>
-    targetUnit === "minutes" ? timeSec / 60 : timeSec
-
-  const opsInSec = operations.map((op) => ({
-    ...op,
-    timeSec: convertToSeconds(op.time, op.unit),
-  }))
-
-  const totalTimeSec = opsInSec.reduce((acc, op) => acc + op.timeSec, 0)
-  const totalTime = convertFromSeconds(totalTimeSec, timeUnit)
-  const avgTime = totalTime / operations.length
-
-  const maxSec = Math.max(...opsInSec.map((o) => o.timeSec))
-  const bottleneck = opsInSec.find((o) => o.timeSec === maxSec)
-  const bottleneckTime = bottleneck ? convertFromSeconds(bottleneck.timeSec, timeUnit) : 0
-
-  const taktTimeInDisplayUnit = taktTime ? convertFromSeconds(taktTime, timeUnit) : undefined
+  const metrics = calculateRouteMetrics(operations)
+  const totalTime = secondsToTime(metrics.totalSeconds, timeUnit)
+  const avgTime = secondsToTime(metrics.averageSeconds, timeUnit)
+  const bottleneck = metrics.bottleneckIndex === null ? undefined : operations[metrics.bottleneckIndex]
+  const bottleneckTime = secondsToTime(metrics.bottleneckSeconds, timeUnit)
+  const taktTimeInDisplayUnit = taktTime ? secondsToTime(taktTime, timeUnit) : undefined
 
   return (
     <div className="glass-panel p-6 rounded-3xl border border-primary/20 shadow-[0_0_20px_-5px_rgba(6,182,212,0.1)]">

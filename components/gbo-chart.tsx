@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from "recharts"
 import { Input } from "@/components/ui/input"
 import { Pencil } from "lucide-react"
+import { calculateRouteMetrics, secondsToTime, timeToSeconds } from "@/lib/production-metrics"
 
 interface Operation {
   id: string
@@ -44,30 +45,20 @@ export const GBOChart = React.memo(function GBOChart({ operations, timeUnit, tak
   const [isEditingTitle, setIsEditingTitle] = useState(false)
 
   const { chartData, averageTime, taktTimeInDisplayUnit, originalTaktValue, yAxisMax } = useMemo(() => {
-    const convertToSeconds = (time: number, unit: "minutes" | "seconds"): number => {
-      return unit === "minutes" ? time * 60 : time
-    }
-
-    const convertFromSeconds = (timeInSeconds: number, targetUnit: "minutes" | "seconds"): number => {
-      return targetUnit === "minutes" ? timeInSeconds / 60 : timeInSeconds
-    }
-
     const operationsInSeconds = operations.map((op) => ({
       ...op,
-      timeInSeconds: convertToSeconds(op.time, op.unit),
+      timeInSeconds: timeToSeconds(op.time, op.unit),
     }))
 
     const operationsInDisplayUnit = operationsInSeconds.map((op) => ({
       ...op,
-      timeInDisplayUnit: convertFromSeconds(op.timeInSeconds, timeUnit),
+      timeInDisplayUnit: secondsToTime(op.timeInSeconds, timeUnit),
     }))
 
-    const averageTimeInSeconds = operationsInSeconds.length > 0 
-      ? operationsInSeconds.reduce((sum, op) => sum + op.timeInSeconds, 0) / operationsInSeconds.length
-      : 0
-    const avgTime = convertFromSeconds(averageTimeInSeconds, timeUnit)
+    const routeMetrics = calculateRouteMetrics(operations)
+    const avgTime = secondsToTime(routeMetrics.averageSeconds, timeUnit)
 
-    const taktDisplay = taktTime ? convertFromSeconds(taktTime, timeUnit) : undefined
+    const taktDisplay = taktTime ? secondsToTime(taktTime, timeUnit) : undefined
 
     const origTakt = taktTime ? (
       taktTimeUnit === "hours" ? taktTime / 3600 :
@@ -82,7 +73,7 @@ export const GBOChart = React.memo(function GBOChart({ operations, timeUnit, tak
     const yMax = Math.ceil(Math.max(maxOperationWithPadding, taktWithPadding, 1))
 
     const data: ChartDataPoint[] = operationsInDisplayUnit.map((operation, index) => {
-      const isMaxTime = operation.timeInSeconds === Math.max(...operationsInSeconds.map((op) => op.timeInSeconds))
+      const isMaxTime = operation.timeInSeconds === routeMetrics.bottleneckSeconds
       const exceedsTakt = taktTime ? operation.timeInSeconds > taktTime : false
       const isBottleneck = isMaxTime || exceedsTakt
 
@@ -103,7 +94,7 @@ export const GBOChart = React.memo(function GBOChart({ operations, timeUnit, tak
       originalTaktValue: origTakt,
       yAxisMax: yMax
     }
-  }, [operations, timeUnit, taktTime, taktTimeUnit, demandUnit])
+  }, [operations, timeUnit, taktTime, taktTimeUnit])
 
   const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
     if (active && payload && payload.length) {

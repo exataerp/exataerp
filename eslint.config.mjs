@@ -19,6 +19,8 @@ export default defineConfig([
   globalIgnores([
     ".next/**",
     "node_modules/**",
+    ".pnpm-store/**",
+    "tmp/**",
     "next-env.d.ts",
   ]),
 ])

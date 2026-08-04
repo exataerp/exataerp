@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { GBOChart } from "@/components/gbo-chart"
 import { supabase } from "@/components/supabase"
+import { calculateRouteMetrics, secondsToTime } from "@/lib/production-metrics"
 import { Plus, Download, Upload, FileSpreadsheet, CheckCircle2, FileImage, ChevronDown, Save, BookOpen, Pencil, Trash2, Search, ChevronRight, FilePlus2, X, Package } from "lucide-react"
 
 interface Operation {
@@ -39,12 +40,14 @@ interface BomItem {
 }
 
 interface OperacaoDatabase {
+  id: string
   nome: string
   tempo: number
   unidade: "minutes" | "seconds"
   ordem?: number
   setup_time?: number
   maquina_id?: string
+  ativo?: boolean
 }
 
 interface ProdutoDatabase {
@@ -68,14 +71,14 @@ const validateText = (value: string): { isValid: boolean; error?: string } => {
   return { isValid: true }
 }
 
-type CalcType = "takt" | "media" | "soma"
+type CalcType = "total" | "media" | "gargalo"
 
 export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresaAtivaId?: string | null }) {
   const [operations, setOperations] = useState<Operation[]>([])
   const [timeUnit, setTimeUnit] = useState<"minutes" | "seconds">("minutes")
   const [productCode, setProductCode] = useState("")
   const [productName, setProductName] = useState("")
-  const [calcType, setCalcType] = useState<CalcType>("takt")
+  const [calcType, setCalcType] = useState<CalcType>("total")
   const [newOperationName, setNewOperationName] = useState("")
   const [newOperationTime, setNewOperationTime] = useState("")
   const [newOperationSetup, setNewOperationSetup] = useState("")
@@ -156,9 +159,10 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
     try {
       const { data: prods, error } = await supabase
         .from("produtos")
-        .select(`id, codigo, descricao, operacoes (nome, tempo, unidade, ordem, setup_time, maquina_id)`)
+        .select(`id, codigo, descricao, operacoes (id, nome, tempo, unidade, ordem, setup_time, maquina_id, ativo)`)
         .order("ordem", { foreignTable: "operacoes" })
         .eq("empresa_id", empresaAtivaId)
+        .eq("ativo", true)
 
       if (error) throw error
 
@@ -166,7 +170,7 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
         const formatted = (prods as ProdutoDatabase[]).map((p) => ({
           code: p.codigo,
           description: p.descricao,
-          steps: (p.operacoes || []).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((o) => ({
+          steps: (p.operacoes || []).filter(o => o.ativo !== false).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0)).map((o) => ({
             name: o.nome,
             cycleTime: o.unidade === "minutes" ? o.tempo * 60 : o.tempo,
             setupTime: o.unidade === "minutes" ? (o.setup_time || 0) * 60 : (o.setup_time || 0),
@@ -193,7 +197,9 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
           if (parsed.operations) setOperations(parsed.operations)
           if (parsed.productCode) setProductCode(parsed.productCode)
           if (parsed.productName) setProductName(parsed.productName)
-          if (parsed.calcType) setCalcType(parsed.calcType)
+          if (parsed.calcType === "media") setCalcType("media")
+          else if (parsed.calcType === "gargalo" || parsed.calcType === "takt") setCalcType("gargalo")
+          else setCalcType("total")
           if (parsed.timeUnit) setTimeUnit(parsed.timeUnit)
         } catch (e) {
           // Ignorado
@@ -212,13 +218,15 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
     }
   }, [operations, productCode, productName, calcType, timeUnit, isLoaded, empresaAtivaId])
 
-  const totalCycleTime = useMemo(() => {
-    if (operations.length === 0) return 0
-    if (calcType === "soma") return operations.reduce((sum, op) => sum + op.time, 0)
-    if (calcType === "media") return operations.reduce((sum, op) => sum + op.time, 0) / operations.length
-    if (calcType === "takt") return Math.max(...operations.map((op) => op.time))
-    return 0
-  }, [operations, calcType])
+  const routeMetrics = useMemo(() => calculateRouteMetrics(operations), [operations])
+  const selectedMetric = useMemo(() => {
+    const seconds = calcType === "media"
+      ? routeMetrics.averageSeconds
+      : calcType === "gargalo"
+        ? routeMetrics.bottleneckSeconds
+        : routeMetrics.totalSeconds
+    return secondsToTime(seconds, timeUnit)
+  }, [calcType, routeMetrics, timeUnit])
 
   const handleMaquinaChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value
@@ -292,7 +300,7 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
     setProductName("")
     setOperations([])
     setBomItems([])
-    setCalcType("takt")
+    setCalcType("total")
     setTimeUnit("minutes")
     setNewOperationName("")
     setNewOperationTime("")
@@ -309,8 +317,8 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
     description: productName.trim(),
     steps: operations.map((op) => ({
       name: op.name,
-      cycleTime: timeUnit === "minutes" ? op.time * 60 : op.time,
-      setupTime: timeUnit === "minutes" ? (op.setupTime || 0) * 60 : (op.setupTime || 0),
+      cycleTime: op.unit === "minutes" ? op.time * 60 : op.time,
+      setupTime: op.unit === "minutes" ? (op.setupTime || 0) * 60 : (op.setupTime || 0),
       maquina_id: op.maquina_id
     })),
   })
@@ -318,46 +326,27 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
   const commitSaveProduct = async (product: ReturnType<typeof buildNewProduct>) => {
     setIsLoading(true)
     try {
-      const { data: prodData, error: prodError } = await supabase
-        .from("produtos")
-        .upsert({ 
-          codigo: product.code, 
-          descricao: product.description,
-          ...(empresaAtivaId && { empresa_id: empresaAtivaId }) 
-        }, { onConflict: "empresa_id,codigo" })
-        .select()
-        .single()
+      if (!empresaAtivaId) throw new Error("Empresa não identificada")
 
-      if (prodError) throw prodError
-
-      await supabase.from("operacoes").delete().eq("produto_id", prodData.id)
-
-      const opsToInsert = operations.map((op, index) => ({
-        produto_id: prodData.id,
-        ordem: index + 1,
-        nome: op.name,
-        tempo: op.time,
-        unidade: op.unit,
-        setup_time: op.setupTime,
-        maquina_id: op.maquina_id || null,
-        empresa_id: empresaAtivaId || null,
-      }))
-
-      const { error: opsError } = await supabase.from("operacoes").insert(opsToInsert)
-      if (opsError) throw opsError
-
-      // Salva BOM — apaga e recria
-      await supabase.from("bom_itens").delete().eq("produto_codigo", product.code).eq("empresa_id", empresaAtivaId!)
-      if (bomItems.length > 0) {
-        const bomToInsert = bomItems.map(b => ({
-          empresa_id: empresaAtivaId,
-          produto_codigo: product.code,
-          insumo_id: b.insumo_id,
-          quantidade: b.quantidade,
-          unidade_medida: b.unidade_medida,
-        }))
-        await supabase.from("bom_itens").insert(bomToInsert)
-      }
+      const { error: roteiroError } = await supabase.rpc("salvar_roteiro_produto", {
+        p_empresa_id: empresaAtivaId,
+        p_codigo: product.code,
+        p_descricao: product.description,
+        p_operacoes: operations.map(op => ({
+          nome: op.name,
+          tempo: op.time,
+          unidade: op.unit,
+          setup_time: op.setupTime,
+          maquina_id: op.maquina_id || null,
+          obrigatoria: true,
+        })),
+        p_bom: bomItems.map(item => ({
+          insumo_id: item.insumo_id,
+          quantidade: item.quantidade,
+          unidade_medida: item.unidade_medida,
+        })),
+      })
+      if (roteiroError) throw roteiroError
 
       const existingData = localStorage.getItem("gbo_products")
       let productsArray = existingData ? JSON.parse(existingData) : []
@@ -430,14 +419,19 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
       return
     }
     try {
-      await supabase.from("produtos").delete().eq("codigo", code).eq("empresa_id", empresaAtivaId)
+      const { error } = await supabase
+        .from("produtos")
+        .update({ ativo: false })
+        .eq("codigo", code)
+        .eq("empresa_id", empresaAtivaId)
+      if (error) throw error
       
       const updated = savedProducts.filter((p) => p.code !== code)
       setSavedProducts(updated)
       localStorage.setItem("gbo_products", JSON.stringify(updated))
       window.dispatchEvent(new Event("sync_gbo_products"))
       if (expandedProduct === code) setExpandedProduct(null)
-      toast({ title: "Produto Removido", description: `O roteiro "${code}" foi excluído da nuvem.` })
+      toast({ title: "Produto Inativado", description: `O roteiro "${code}" foi preservado no histórico.` })
     } catch (e: unknown) {
       toast({ title: "Erro ao excluir", description: (e as Error).message, variant: "destructive" })
     }
@@ -564,23 +558,23 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button className="w-full h-12 px-4 rounded-xl bg-input border border-border text-sm font-medium text-foreground flex items-center justify-between outline-none hover:bg-muted transition-all focus:ring-2 focus:ring-primary">
-                        {calcType === "takt" ? "Takt" : calcType === "media" ? "Soma" : "Média"}
+                        {calcType === "total" ? "Ciclo total" : calcType === "media" ? "Média" : "Gargalo"}
                         <ChevronDown className="w-4 h-4 text-muted-foreground" />
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent className="w-[var(--radix-dropdown-menu-trigger-width)] bg-card border border-border p-2 rounded-2xl shadow-xl z-[150]">
-                      {["takt", "media", "soma"].map((c) => (
+                      {(["total", "media", "gargalo"] as CalcType[]).map((c) => (
                         <DropdownMenuItem key={c} onClick={() => setCalcType(c as CalcType)}
                           className={`w-full text-left text-sm font-bold py-2.5 px-3 rounded-xl cursor-pointer transition-all ${calcType === c ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"}`}>
-                          {c === "takt" ? "Takt" : c === "media" ? "Média" : "Soma"}
+                          {c === "total" ? "Ciclo total" : c === "media" ? "Média" : "Gargalo"}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Tempo de Ciclo</label>
-                  <input type="text" readOnly value={`${totalCycleTime.toFixed(2)} ${timeUnit === "minutes" ? "min" : "seg"}`}
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Métrica selecionada</label>
+                  <input type="text" readOnly value={`${selectedMetric.toFixed(2)} ${timeUnit === "minutes" ? "min" : "seg"}`}
                     className="w-full h-12 px-4 rounded-xl border border-border bg-muted/50 text-muted-foreground text-sm outline-none cursor-not-allowed font-semibold" />
                 </div>
               </div>
@@ -588,7 +582,7 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
                 <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl flex items-center gap-3 mt-4">
                   <CheckCircle2 className="h-5 w-5 text-primary" />
                   <p className="text-sm font-semibold text-primary">
-                    Tempo de Ciclo Total: {totalCycleTime.toFixed(2)} {timeUnit === "minutes" ? "min" : "seg"}
+                    Ciclo total do roteiro: {secondsToTime(routeMetrics.totalSeconds, timeUnit).toFixed(2)} {timeUnit === "minutes" ? "min" : "seg"}
                   </p>
                 </div>
               )}
@@ -788,10 +782,10 @@ export function GBOTab({ user, empresaAtivaId }: { user: { id: string }, empresa
           {operations.length > 0 ? (
             <React.Fragment>
               <div className="print:hidden">
-                <CalculationsDashboard operations={operations} timeUnit={timeUnit} taktTime={calcType === "takt" && operations.length > 0 ? (timeUnit === "minutes" ? totalCycleTime * 60 : totalCycleTime) : undefined} taktTimeUnit="seconds" demandUnit="un" />
+                <CalculationsDashboard operations={operations} timeUnit={timeUnit} />
               </div>
               <div id="gbo-chart-container" className="bg-card rounded-3xl shadow-sm border border-border p-6 print:border-none print:shadow-none print:p-0">
-                <GBOChart operations={operations} timeUnit={timeUnit} taktTime={calcType === "takt" && operations.length > 0 ? (timeUnit === "minutes" ? totalCycleTime * 60 : totalCycleTime) : undefined} taktTimeUnit="seconds" demandUnit="un" />
+                <GBOChart operations={operations} timeUnit={timeUnit} />
               </div>
               <div className="flex flex-col sm:flex-row sm:items-start gap-3 mt-2 print:hidden">
                 {/* BOM */}
