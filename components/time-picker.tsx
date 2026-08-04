@@ -3,6 +3,7 @@
 import React, { useState } from "react"
 import { Clock } from "lucide-react"
 import * as PopoverPrimitive from "@radix-ui/react-popover"
+import { HOURS, MINUTES, selectHour, selectMinute } from "@/lib/time-picker"
 
 interface TimePickerProps {
   value: string // "HH:MM"
@@ -11,18 +12,15 @@ interface TimePickerProps {
   placeholder?: string
 }
 
-const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0"))
-const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"))
-
 export function TimePicker({ value, onChange, className = "", placeholder = "--:--" }: TimePickerProps) {
   const [open, setOpen] = useState(false)
   const [hh, mm] = value ? value.split(":") : ["", ""]
 
   function setHora(h: string) {
-    onChange(`${h}:${mm || "00"}`)
+    onChange(selectHour(value, h))
   }
   function setMinuto(m: string) {
-    onChange(`${hh || "00"}:${m}`)
+    onChange(selectMinute(value, m))
   }
 
   return (
