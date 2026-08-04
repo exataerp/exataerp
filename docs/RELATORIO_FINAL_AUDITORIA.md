@@ -4,6 +4,8 @@ Data: 2026-08-04
 Branch: `audit/integridade-fluxo-exata`
 Base auditada: `1dd655930112e7927918e0e3a1f4acff5e0bb9d6`
 
+> Atualização pós-deploy: o frontend foi publicado e a validação executada está registrada em `docs/VALIDACAO_POS_DEPLOY.md`. Esse documento posterior prevalece sobre as marcações pré-publicação das seções 7 a 13 abaixo. A estabilização total continua aberta pelos critérios explicitamente pendentes nessa validação.
+
 ## 1. Parecer
 
 O incidente do cronômetro foi reproduzido e explicado por evidência de banco e código. Não houve início automático causado apenas pela seleção do posto. O apontamento foi persistido como ativo e depois perdeu sua ordem e operação por exclusões físicas sem chaves estrangeiras. Ao reabrir a tela, o frontend restaurou corretamente a sessão persistida e mostrou o tempo acumulado. A origem “Sistema” era um fallback para evento ausente.
@@ -142,21 +144,11 @@ Não é seguro inserir versões no ledger apenas porque objetos com nomes semelh
 
 ## 7. Cobertura dos cenários solicitados
 
-| Cenário | Cobertura |
-|---|---|
-| A — selecionar posto sem iniciar | teste existente de seleção + início permanece em handler explícito |
-| B — OP com 5 operações | testes provam pendência parcial e 100, não 500, ao concluir |
-| C — produto 2040 | teste exato de 10/7/11/31/14/15 s |
-| D — pausas | 18 testes de intervalo, virada do dia, override, retomada e tenant |
-| E — concorrência | idempotência, índice parcial, advisory lock e teste estático da migration |
-| F — órfão | diagnóstico real + filtros de consumidores + FKs `NOT VALID` |
-| G — produto em uso | FK/trigger bloqueiam delete; frontend inativa |
-| H — operação usada | snapshot/FK preservam UUID; GBO cria versão |
-| I — UTC/local | teste de turno noturno/virada e regra documentada de `timestamptz` |
+Os cenários A–I são os definidos no pedido original: apontamento inválido, início normal, duplo clique, cinco operações, parcial, refugo, tempo de ciclo, encerramento/estorno e multitenant. A classificação pós-publicação, sem promover testes estáticos a evidência funcional, está em `docs/VALIDACAO_POS_DEPLOY.md`.
 
-Resultado local:
+Resultado local final:
 
-- 64 testes aprovados;
+- 73 testes aprovados;
 - typecheck aprovado;
 - lint aprovado com 0 erros e 16 avisos preexistentes (15 de hooks e 1 diretiva sem uso); o aviso introduzido no gráfico foi removido;
 - build Next.js 16.2.9 aprovado, 13 páginas geradas;
@@ -166,14 +158,9 @@ O build também informa que a convenção `middleware` foi depreciada em favor d
 
 ## 8. Commit publicado e Vercel
 
-Na abertura da auditoria:
+A correção foi publicada pela branch `audit/integridade-fluxo-exata`, commit `7d3144ce4070024ace247f6a01c0ead6aa78754e`, no PR 24. O merge de produção é `e6fd2e0d6cd1969c3c1000de6ce58e70d138be64`; a comparação entre os dois commits não contém diferença de arquivos, somente o commit de integração. O status da Vercel para o merge ficou `success` e a aplicação autenticada foi exercitada em `https://exataerp.vercel.app`.
 
-- `HEAD` da branch de origem = `origin/main` = `1dd655930112e7927918e0e3a1f4acff5e0bb9d6`;
-- a branch local `main` estava cinco commits atrás, mas o remoto principal não;
-- o status de commit da Vercel estava `success` para o mesmo SHA;
-- portanto o código auditado e o último commit publicado coincidiam.
-
-As migrations desta branch já foram aplicadas ao banco. O frontend permanece local nesta fotografia pré-publicação. A conectividade e as credenciais para `git push` direto foram comprovadas; a ausência do GitHub CLI não é bloqueio porque o conector GitHub está disponível. A ponte de compatibilidade mantém o frontend publicado operacional nesse intervalo.
+As migrations e o frontend da correção estão em produção. As pontes permanecem disponíveis somente como compatibilidade temporária e possuem plano de retirada em `docs/PONTE_COMPATIBILIDADE_RPC.md`.
 
 ## 9. Ordem de implantação
 
@@ -184,8 +171,8 @@ As migrations desta branch já foram aplicadas ao banco. O frontend permanece lo
 5. Concluído: executar testes, advisors e checagens de papéis/privilégios.
 6. Concluído: aplicar as quatro migrations de estabilização no banco.
 7. Concluído: confirmar RPCs, snapshots, índices e ausência de erros PostgreSQL.
-8. Pendente: publicar o frontend da mesma revisão.
-9. Pendente: executar smoke tests autenticados A–I no frontend publicado.
+8. Concluído: publicar o frontend da mesma revisão.
+9. Parcial: executar smoke tests autenticados A–I no frontend publicado; A aprovado, B parcial e C–I pendentes.
 10. Pendente: monitorar erros, duplicidades, sessões ativas, estoque e OEE.
 11. Concluído: classificar o legado sem alterar vínculos; validar as FKs `NOT VALID` somente em migration posterior e após decisão humana.
 
@@ -206,7 +193,7 @@ Se a migration falhar, a transação PostgreSQL reverte o conjunto. Depois de ap
 ## 11. Pendências que exigem decisão ou ambiente
 
 - reconciliar o ledger de migrations;
-- publicar pelo push Git direto e conector GitHub já comprovados;
+- publicação concluída pelo push Git e conector GitHub; PR 24 integrado e Vercel com status `success`;
 - obter a decisão operacional da Mairo entre encerramento administrativo e estorno auditado do apontamento de Rodrigo Zin; a decisão técnica de preservar e não relinkar já está registrada;
 - decidir backfill de `finalizado_em` com evidência suficiente;
 - revisar os 23 índices de FKs preexistentes restantes e as políticas apontadas pelos advisors; as 11 novas FKs desta correção já receberam índices de cobertura;
@@ -223,6 +210,6 @@ A causa-raiz não era um cronômetro visual isolado. Era a ausência de preserva
 
 As migrations `bloqueio_exclusao_op_com_apontamentos` e `preservar_eventos_producao` foram aplicadas depois de validação integral com `ROLLBACK`. A exclusão física direta foi fechada por trigger; snapshots, eventos, apontamentos, pausas, movimentos e auditoria não possuem caminho destrutivo por `CASCADE` no fluxo protegido.
 
-Em produção, com contexto autenticado de administrador e transações revertidas, passaram OP-01, OP-02, OP-03, OP-04, OP-05, OP-06, OP-08 e OP-09. Isso comprovou rascunho limpo com auditoria; bloqueio de apontamento ativo, pausado, finalizado e estornado; bloqueio de movimento remanescente; isolamento de tenant; e bloqueio de `DELETE` direto. OP-07 continua pendente de duas sessões realmente simultâneas e não foi aprovado por prova estática.
+Em produção, com contexto autenticado de administrador e transações revertidas quando aplicável, passaram OP-01 a OP-09. Isso comprovou rascunho limpo com auditoria; bloqueio de apontamento ativo, pausado, finalizado e estornado; bloqueio de movimento remanescente; isolamento de tenant; bloqueio de `DELETE` direto; e serialização real entre início e exclusão em duas sessões simultâneas. A evidência detalhada está em `docs/VALIDACAO_POS_DEPLOY.md`.
 
 A política é mais estrita que a possibilidade genérica descrita originalmente para OP-05: qualquer apontamento preservado, inclusive estornado, bloqueia definitivamente a exclusão física da OP.
