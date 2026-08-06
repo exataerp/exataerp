@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Users, UserPlus, X, Loader2, Check, AlertCircle, Mail, ChevronDown, ChevronUp, MapPin, Plus } from 'lucide-react'
+import { Users, UserPlus, X, Loader2, Check, AlertCircle, AtSign, UserRound, LockKeyhole, ChevronDown, ChevronUp, MapPin, Plus, RotateCcw } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/contexts/AuthContext'
 import { ROLE_LABELS, type RoleName } from '@/lib/permissions'
@@ -12,10 +12,11 @@ import { ROLE_LABELS, type RoleName } from '@/lib/permissions'
 interface Membro {
   id: string
   user_id: string
-  email: string
+  username: string
+  email: string | null
   nome: string
   status: string
-  first_access_completed: boolean
+  must_change_password: boolean
   roles: { role_name: RoleName; role_display_name: string }[]
   postos: string[]
 }
@@ -47,14 +48,22 @@ export function EquipeTab() {
   const [carregando, setCarregando]         = useState(true)
   const [expandido, setExpandido]           = useState<string | null>(null)
 
-  // Formulário de convite
+  // Formulário de cadastro manual
   const [showConvite, setShowConvite]       = useState(false)
+  const [usernameCadastro, setUsernameCadastro] = useState('')
+  const [senhaCadastro, setSenhaCadastro] = useState('')
   const [emailConvite, setEmailConvite]     = useState('')
   const [nomeConvite, setNomeConvite]       = useState('')
+  const [cargoCadastro, setCargoCadastro] = useState('')
   const [rolesSelecionados, setRolesSelecionados] = useState<RoleName[]>([])
   const [enviando, setEnviando]             = useState(false)
   const [erroConvite, setErroConvite]       = useState('')
   const [sucessoConvite, setSucessoConvite] = useState('')
+  const [resetUserId, setResetUserId] = useState<string | null>(null)
+  const [resetPassword, setResetPassword] = useState('')
+  const [resettingPassword, setResettingPassword] = useState(false)
+  const [resetPasswordError, setResetPasswordError] = useState('')
+  const [resetPasswordSuccess, setResetPasswordSuccess] = useState('')
 
   const empresaId = session?.empresa?.id
 
@@ -69,7 +78,7 @@ export function EquipeTab() {
     const [{ data: perfis }, { data: postosData }, { data: vinculos }, { data: equipesData }, { data: equipeMembros }, { data: equipePostos }, { data: turnosData }] = await Promise.all([
       supabase
       .from('perfis')
-      .select('id, user_id, email, nome, status, first_access_completed')
+      .select('id, user_id, username, email, nome, status, must_change_password')
       .eq('empresa_id', empresaId)
       .order('nome'),
       supabase.from('maquinas').select('id, codigo, nome, status').eq('empresa_id', empresaId).eq('status', 'ativa').order('nome'),
@@ -128,15 +137,15 @@ export function EquipeTab() {
   useEffect(() => { carregar() }, [carregar])
 
   // ------------------------------------------------------------
-  // Convidar usuário
+  // Cadastrar usuário com senha definida pelo administrador
   // ------------------------------------------------------------
-  const handleConvidar = async (e: React.FormEvent) => {
+  const handleCadastrar = async (e: React.FormEvent) => {
     e.preventDefault()
     setErroConvite('')
     setSucessoConvite('')
 
-    if (!emailConvite.trim()) {
-      setErroConvite('Informe o e-mail.')
+    if (!usernameCadastro.trim() || !senhaCadastro || !nomeConvite.trim()) {
+      setErroConvite('Informe nome de usuário, senha e nome do colaborador.')
       return
     }
     if (rolesSelecionados.length === 0) {
@@ -150,15 +159,18 @@ export function EquipeTab() {
       const { data: { session: s } } = await supabase.auth.getSession()
       const token = s?.access_token ?? ''
 
-      const res = await fetch('/api/usuarios/invite', {
+      const res = await fetch('/api/usuarios', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          email: emailConvite.trim(),
+          username: usernameCadastro.trim(),
+          password: senhaCadastro,
+          email: emailConvite.trim() || null,
           nome:  nomeConvite.trim(),
+          cargo: cargoCadastro.trim() || null,
           roles: rolesSelecionados,
         }),
       })
@@ -166,11 +178,14 @@ export function EquipeTab() {
       const json = await res.json()
 
       if (!res.ok) {
-        setErroConvite(json.error ?? 'Erro ao enviar convite.')
+        setErroConvite(json.error ?? 'Erro ao cadastrar usuário.')
       } else {
-        setSucessoConvite(`Convite enviado para ${emailConvite.trim()}.`)
+        setSucessoConvite(`Usuário ${json.username ?? usernameCadastro.trim().toLowerCase()} criado. A troca da senha temporária será obrigatória no primeiro acesso.`)
+        setUsernameCadastro('')
+        setSenhaCadastro('')
         setEmailConvite('')
         setNomeConvite('')
+        setCargoCadastro('')
         setRolesSelecionados([])
         carregar()
       }
@@ -245,6 +260,42 @@ export function EquipeTab() {
     if (!error) carregar()
   }
 
+  const handleResetPassword = async (membro: Membro) => {
+    setResetPasswordError('')
+    setResetPasswordSuccess('')
+    if (!resetPassword) {
+      setResetPasswordError('Informe a nova senha temporária.')
+      return
+    }
+
+    setResettingPassword(true)
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      const response = await fetch(`/api/usuarios/${membro.user_id}/senha`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${currentSession?.access_token ?? ''}`,
+        },
+        body: JSON.stringify({ password: resetPassword }),
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        setResetPasswordError(result.error ?? 'Não foi possível redefinir a senha.')
+        return
+      }
+
+      setResetPassword('')
+      setResetPasswordSuccess('Senha temporária definida. O usuário deverá trocá-la no próximo acesso.')
+      await carregar()
+    } catch {
+      setResetPasswordError('Erro de conexão. Tente novamente.')
+    } finally {
+      setResettingPassword(false)
+    }
+  }
+
   const atualizarTurnoEquipe = async (equipe: EquipeCadastro, turnoId: string) => {
     if (!empresaId) return
     const { error } = await supabase
@@ -285,7 +336,7 @@ export function EquipeTab() {
           className="flex items-center gap-2 h-9 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-all shadow-sm"
         >
           <UserPlus className="h-3.5 w-3.5" />
-          Convidar
+          Cadastrar Usuário
         </button>
       </div>
 
@@ -330,7 +381,7 @@ export function EquipeTab() {
                   <div className="flex flex-wrap gap-2">
                     {membros.map(membro => {
                       const ativo = equipe.membros.includes(membro.user_id)
-                      return <button key={membro.user_id} type="button" onClick={() => toggleMembroEquipe(equipe, membro.user_id)} className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all ${ativo ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border text-muted-foreground'}`}>{membro.nome || membro.email}</button>
+                      return <button key={membro.user_id} type="button" onClick={() => toggleMembroEquipe(equipe, membro.user_id)} className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-all ${ativo ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border text-muted-foreground'}`}>{membro.nome || membro.username}</button>
                     })}
                   </div>
                 </div>
@@ -349,11 +400,11 @@ export function EquipeTab() {
         )}
       </div>
 
-      {/* Formulário de convite */}
+      {/* Formulário de cadastro manual */}
       {showConvite && (
         <div className="bg-card border border-border rounded-2xl p-6 space-y-5 shadow-sm animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-foreground">Novo convite</h3>
+            <h3 className="text-sm font-bold text-foreground">Novo usuário</h3>
             <button onClick={() => setShowConvite(false)} className="text-muted-foreground hover:text-foreground transition-colors">
               <X className="h-4 w-4" />
             </button>
@@ -373,36 +424,82 @@ export function EquipeTab() {
             </div>
           )}
 
-          <form onSubmit={handleConvidar} className="space-y-4">
+          <form onSubmit={handleCadastrar} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                  E-mail
+                  Nome de Usuário
                 </label>
                 <div className="relative">
                   <input
-                    type="email"
-                    value={emailConvite}
-                    onChange={e => setEmailConvite(e.target.value)}
-                    placeholder="colaborador@empresa.com"
+                    type="text"
+                    value={usernameCadastro}
+                    onChange={e => setUsernameCadastro(e.target.value)}
+                    placeholder="operador.corte"
+                    autoComplete="off"
                     disabled={enviando}
                     className="w-full h-10 pl-9 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50"
                   />
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 </div>
+                <p className="text-[10px] text-muted-foreground">3 a 40 caracteres, sem espaços ou acentos.</p>
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                  Nome (opcional)
+                  Senha Temporária
                 </label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={senhaCadastro}
+                    onChange={e => setSenhaCadastro(e.target.value)}
+                    placeholder="Mínimo de 8 caracteres"
+                    autoComplete="new-password"
+                    disabled={enviando}
+                    className="w-full h-10 pl-9 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50"
+                  />
+                  <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Nome</label>
                 <input
                   type="text"
                   value={nomeConvite}
                   onChange={e => setNomeConvite(e.target.value)}
                   placeholder="Nome do colaborador"
+                  autoComplete="off"
                   disabled={enviando}
                   className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50"
                 />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Cargo (opcional)</label>
+                <input
+                  type="text"
+                  value={cargoCadastro}
+                  onChange={e => setCargoCadastro(e.target.value)}
+                  placeholder="Operador"
+                  autoComplete="off"
+                  disabled={enviando}
+                  className="w-full h-10 px-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">E-mail de Contato (opcional)</label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={emailConvite}
+                    onChange={e => setEmailConvite(e.target.value)}
+                    placeholder="contato@empresa.com"
+                    autoComplete="off"
+                    disabled={enviando}
+                    className="w-full h-10 pl-9 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all disabled:opacity-50"
+                  />
+                  <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                </div>
+                <p className="text-[10px] text-muted-foreground">Não é usado para entrar e pode ser repetido em outros usuários.</p>
               </div>
             </div>
 
@@ -450,8 +547,8 @@ export function EquipeTab() {
               className="w-full h-10 flex items-center justify-center gap-2 bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wider rounded-xl hover:opacity-90 transition-all disabled:opacity-50"
             >
               {enviando
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Enviando...</>
-                : <><Mail className="h-3.5 w-3.5" /> Enviar Convite</>
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Cadastrando...</>
+                : <><UserPlus className="h-3.5 w-3.5" /> Criar Usuário</>
               }
             </button>
           </form>
@@ -464,7 +561,7 @@ export function EquipeTab() {
           <div className="py-16 text-center text-muted-foreground">
             <Users className="h-10 w-10 mx-auto mb-3 opacity-20" />
             <p className="text-sm font-medium">Nenhum membro ainda.</p>
-            <p className="text-xs mt-1">Convide colaboradores usando o botão acima.</p>
+            <p className="text-xs mt-1">Cadastre colaboradores usando o botão acima.</p>
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -477,24 +574,30 @@ export function EquipeTab() {
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
                       <span className="text-primary text-xs font-black">
-                        {(membro.nome || membro.email).slice(0, 2).toUpperCase()}
+                        {(membro.nome || membro.username).slice(0, 2).toUpperCase()}
                       </span>
                     </div>
                     <div className="min-w-0">
                       <p className="text-sm font-bold text-foreground truncate">
-                        {membro.nome || membro.email}
+                        {membro.nome || membro.username}
                       </p>
-                      <p className="text-[11px] text-muted-foreground truncate">{membro.email}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        @{membro.username}{membro.email ? ` · ${membro.email}` : ''}
+                      </p>
+                      {membro.must_change_password && (
+                        <span className="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                          Troca de senha pendente
+                        </span>
+                      )}
+                      {!membro.user_id && (
+                        <span className="mt-1 inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">
+                          Perfil sem vínculo de autenticação
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    {/* Badge de status */}
-                    {!membro.first_access_completed && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-500 border border-amber-500/20">
-                        Pendente
-                      </span>
-                    )}
                     {/* Roles resumidos */}
                     <div className="hidden sm:flex gap-1 flex-wrap justify-end">
                       {membro.roles.slice(0, 2).map(r => (
@@ -581,6 +684,49 @@ export function EquipeTab() {
                         </div>
                       )}
                     </div>
+                    {membro.user_id && membro.user_id !== supabaseUser?.id && (
+                      <div className="border-t border-border pt-4">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetUserId(resetUserId === membro.user_id ? null : membro.user_id)
+                            setResetPassword('')
+                            setResetPasswordError('')
+                            setResetPasswordSuccess('')
+                          }}
+                          className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-primary hover:opacity-80"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Redefinir senha
+                        </button>
+
+                        {resetUserId === membro.user_id && (
+                          <div className="mt-3 space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              Defina uma senha temporária. O acesso ao restante do ERP ficará bloqueado até o usuário criar uma senha pessoal.
+                            </p>
+                            {resetPasswordError && <p className="text-xs font-medium text-red-600">{resetPasswordError}</p>}
+                            {resetPasswordSuccess && <p className="text-xs font-medium text-green-700">{resetPasswordSuccess}</p>}
+                            <input
+                              type="password"
+                              value={resetPassword}
+                              disabled={resettingPassword}
+                              autoComplete="new-password"
+                              onChange={(event) => setResetPassword(event.target.value)}
+                              placeholder="Nova senha temporária"
+                              className="h-10 w-full rounded-xl border border-border bg-input px-3.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary disabled:opacity-60"
+                            />
+                            <button
+                              type="button"
+                              disabled={resettingPassword}
+                              onClick={() => void handleResetPassword(membro)}
+                              className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary text-xs font-bold uppercase tracking-wider text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                            >
+                              {resettingPassword ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Redefinindo...</> : 'Confirmar redefinição'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

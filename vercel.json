@@ -1,3 +1,8 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "wip/login-username-cloud-handoff-20260806": false
+    }
+  },
   "installCommand": "npm install --legacy-peer-deps"
 }

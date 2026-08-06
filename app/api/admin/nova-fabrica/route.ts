@@ -1,138 +1,159 @@
 import { NextResponse } from 'next/server'
+
 import {
-  supabaseAdmin,
-  getUserFromToken,
+  buildInternalAuthEmail,
+  normalizeOptionalEmail,
+  normalizeUsername,
+  validateOptionalEmail,
+  validatePassword,
+  validateUsername,
+} from '@/lib/auth-credentials'
+import {
   assertSuperAdmin,
   AuthError,
+  getUserFromToken,
+  supabaseAdmin,
 } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
-// POST /api/admin/nova-fabrica
-// Cria uma nova empresa (cliente do SaaS) e convida o administrador dela.
-// Requer: Super Admin global autenticado (tabela super_admins).
-//
-// Body: { email: string, nomeFabrica: string }
-
 export async function POST(request: Request) {
   let createdEmpresaId: string | null = null
-  let invitedUserId: string | null = null
+  let createdUserId: string | null = null
 
   try {
     const caller = await getUserFromToken(request)
     await assertSuperAdmin(caller.id)
 
     const body = await request.json()
-    const email = String(body.email ?? '').trim().toLowerCase()
     const nomeFabrica = String(body.nomeFabrica ?? '').trim()
+    const nome = String(body.nome ?? '').trim() || 'Administrador'
+    const username = normalizeUsername(body.username)
+    const password = String(body.password ?? '')
+    const email = normalizeOptionalEmail(body.email)
 
-    if (!email) {
-      return NextResponse.json({ error: 'E-mail é obrigatório.' }, { status: 400 })
-    }
-    if (!nomeFabrica) {
-      return NextResponse.json({ error: 'Nome da fábrica é obrigatório.' }, { status: 400 })
+    const validationError =
+      (!nomeFabrica ? 'Nome da fábrica é obrigatório.' : null)
+      ?? validateUsername(username)
+      ?? validatePassword(password)
+      ?? validateOptionalEmail(email)
+
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 })
     }
 
-    // Cria a empresa
+    const { data: existing } = await supabaseAdmin
+      .from('perfis')
+      .select('id')
+      .eq('username', username)
+      .maybeSingle()
+
+    if (existing) {
+      return NextResponse.json(
+        { error: 'Este nome de usuário já está em uso.' },
+        { status: 409 },
+      )
+    }
+
     const { data: empresa, error: empresaError } = await supabaseAdmin
       .from('empresas')
       .insert([{ nome: nomeFabrica, status: 'ativo' }])
-      .select()
+      .select('id')
       .single()
 
-    if (empresaError) throw new Error(`Erro ao criar empresa: ${empresaError.message}`)
+    if (empresaError || !empresa) {
+      throw new Error(empresaError?.message || 'Não foi possível criar a empresa.')
+    }
     createdEmpresaId = empresa.id
 
-    // Busca o id do role system_manager (quem administra a empresa)
     const { data: role, error: roleError } = await supabaseAdmin
       .from('roles')
       .select('id')
       .eq('name', 'system_manager')
       .single()
 
-    if (roleError || !role) throw new Error('Role system_manager não encontrado.')
+    if (roleError || !role) throw new Error('Perfil de Administrador do Sistema não encontrado.')
 
-    // Convida o administrador da nova empresa via Supabase Auth
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://exataerp.vercel.app'
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      email,
-      { redirectTo: `${siteUrl}/primeiro-acesso` }
-    )
+    const internalEmail = buildInternalAuthEmail(crypto.randomUUID())
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email: internalEmail,
+      password,
+      email_confirm: true,
+      user_metadata: { nome, username },
+      app_metadata: {
+        empresa_id: empresa.id,
+        login_identifier: 'username',
+      },
+    })
 
-    if (authError) {
-      // Rollback da empresa criada, pra não deixar lixo órfão
-      await supabaseAdmin.from('empresas').delete().eq('id', empresa.id)
-      throw new Error(`Erro ao convidar usuário: ${authError.message}`)
+    if (authError || !authData.user) {
+      throw new Error(authError?.message || 'Não foi possível criar o administrador.')
     }
+    createdUserId = authData.user.id
 
-    const newUserId = authData.user.id
-    invitedUserId = newUserId
-
-    // Cria o perfil (id e user_id precisam ser o mesmo valor: o id do auth.users)
-    const { error: perfilError } = await supabaseAdmin
-      .from('perfis')
-      .insert({
-        id: newUserId,
-        user_id: newUserId,
+    const writes = await Promise.all([
+      supabaseAdmin.from('perfis').insert({
+        id: createdUserId,
+        user_id: createdUserId,
+        username,
         email,
-        nome: '',
+        nome,
         status: 'ativo',
         empresa_id: empresa.id,
+        tipo_usuario: 'admin',
         first_access_completed: false,
+        must_change_password: true,
+        password_reset_required_at: new Date().toISOString(),
+        password_reset_by: caller.id,
         updated_at: new Date().toISOString(),
-      })
-
-    if (perfilError) throw new Error(`Erro ao criar perfil: ${perfilError.message}`)
-
-    // Mantém compatibilidade com as políticas RLS operacionais, que validam
-    // o vínculo de empresa pela tabela controle_acesso.
-    const { error: acessoError } = await supabaseAdmin
-      .from('controle_acesso')
-      .insert({
-        user_id: newUserId,
+      }),
+      supabaseAdmin.from('controle_acesso').insert({
+        user_id: createdUserId,
         empresa_id: empresa.id,
         nivel: 'admin',
         status: 'ativo',
-      })
-
-    if (acessoError) throw new Error(`Erro ao criar controle de acesso: ${acessoError.message}`)
-
-    // Atribui o role system_manager ao administrador da nova empresa
-    const { error: roleAssignError } = await supabaseAdmin
-      .from('user_roles')
-      .insert({
-        user_id: newUserId,
+        activated_at: new Date().toISOString(),
+      }),
+      supabaseAdmin.from('user_roles').insert({
+        user_id: createdUserId,
         empresa_id: empresa.id,
         role_id: role.id,
         granted_by: caller.id,
-      })
+      }),
+    ])
 
-    if (roleAssignError) throw new Error(`Erro ao atribuir role: ${roleAssignError.message}`)
+    const writeError = writes.find((result) => result.error)?.error
+    if (writeError) throw new Error(writeError.message)
 
-    return NextResponse.json({
-      success: true,
-      message: 'Fábrica criada e convite enviado.',
-      empresa_id: empresa.id,
-    })
-
-  } catch (err: any) {
-    // Convite, perfil, acesso e role formam uma única operação lógica.
-    // Remove qualquer criação parcial para permitir uma nova tentativa limpa.
-    if (invitedUserId) {
-      await supabaseAdmin.from('user_roles').delete().eq('user_id', invitedUserId)
-      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', invitedUserId)
-      await supabaseAdmin.from('perfis').delete().eq('user_id', invitedUserId)
-      await supabaseAdmin.from('perfis').delete().eq('id', invitedUserId)
-      await supabaseAdmin.auth.admin.deleteUser(invitedUserId)
+    return NextResponse.json(
+      {
+        success: true,
+        message: 'Fábrica e administrador criados com senha definida.',
+        empresa_id: empresa.id,
+        user_id: createdUserId,
+        username,
+      },
+      { status: 201 },
+    )
+  } catch (error: unknown) {
+    if (createdUserId) {
+      await supabaseAdmin.from('user_roles').delete().eq('user_id', createdUserId)
+      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', createdUserId)
+      await supabaseAdmin.from('perfis').delete().eq('user_id', createdUserId)
+      await supabaseAdmin.auth.admin.deleteUser(createdUserId)
     }
-
     if (createdEmpresaId) {
       await supabaseAdmin.from('empresas').delete().eq('id', createdEmpresaId)
     }
 
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: err.message }, { status: err.status })
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
     }
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    const message = error instanceof Error ? error.message : 'Erro interno no servidor.'
+    const status = /duplicate key|unique constraint/i.test(message) ? 409 : 500
+    return NextResponse.json(
+      { error: status === 409 ? 'Este nome de usuário já está em uso.' : message },
+      { status },
+    )
   }
 }

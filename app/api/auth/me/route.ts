@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     // Busca perfil
     const { data: perfil, error: perfilErr } = await supabaseAdmin
       .from('perfis')
-      .select('id, nome, cargo, status, email, empresa_id, first_access_completed')
+      .select('id, username, nome, cargo, status, email, empresa_id, first_access_completed, must_change_password')
       .eq('user_id', user.id)
       .single()
 
@@ -69,11 +69,13 @@ export async function GET(request: Request) {
     return NextResponse.json({
       user: {
         id:                     user.id,
-        email:                  user.email ?? perfil.email,
+        username:               perfil.username,
+        email:                  perfil.email,
         nome:                   perfil.nome,
         cargo:                  perfil.cargo,
         status:                 perfil.status,
         first_access_completed: perfil.first_access_completed,
+        must_change_password:   perfil.must_change_password,
       },
       empresa: {
         id:                   empresa.id,

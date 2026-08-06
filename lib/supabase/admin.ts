@@ -40,6 +40,16 @@ export async function getUserFromToken(request: Request) {
     throw new AuthError('Token inválido ou expirado', 401)
   }
 
+  const { data: perfil } = await supabaseAdmin
+    .from('perfis')
+    .select('must_change_password')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (perfil?.must_change_password) {
+    throw new AuthError('Troca de senha obrigatória.', 403)
+  }
+
   return user
 }
 

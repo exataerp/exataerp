@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useCallback } from "react"
-import { ShieldAlert, Users, Plus, Building2, Mail, Power, RefreshCw, Loader2 } from "lucide-react"
+import { ShieldAlert, Users, Plus, Building2, AtSign, UserRound, LockKeyhole, Power, RefreshCw, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 
@@ -15,6 +15,9 @@ export function MasterTab() {
   const [acessoNegado, setAcessoNegado] = useState(false)
 
   const [novaEmpresa, setNovaEmpresa] = useState("")
+  const [novoNome, setNovoNome] = useState("")
+  const [novoUsername, setNovoUsername] = useState("")
+  const [novaSenha, setNovaSenha] = useState("")
   const [novoEmail, setNovoEmail] = useState("")
   const [isCreating, setIsCreating] = useState(false)
 
@@ -67,9 +70,9 @@ export function MasterTab() {
     }
   }
 
-  const handleCriarConvite = async () => {
-    if (!novaEmpresa.trim() || !novoEmail.trim()) {
-      toast({ title: "Dados incompletos", description: "Preencha o nome da empresa e o e-mail.", variant: "destructive" })
+  const handleCriarAcesso = async () => {
+    if (!novaEmpresa.trim() || !novoNome.trim() || !novoUsername.trim() || !novaSenha) {
+      toast({ title: "Dados incompletos", description: "Preencha empresa, administrador, nome de usuário e senha.", variant: "destructive" })
       return
     }
 
@@ -80,16 +83,22 @@ export function MasterTab() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({
-          email: novoEmail.trim(),
           nomeFabrica: novaEmpresa.trim(),
+          nome: novoNome.trim(),
+          username: novoUsername.trim(),
+          password: novaSenha,
+          email: novoEmail.trim() || null,
         }),
       })
 
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || "Erro desconhecido ao criar acesso.")
 
-      toast({ title: "Fábrica Operacional", description: "O ambiente foi isolado e o convite foi enviado ao e-mail do administrador." })
+      toast({ title: "Fábrica Operacional", description: "O administrador já pode entrar e deverá trocar a senha temporária no primeiro acesso." })
       setNovaEmpresa("")
+      setNovoNome("")
+      setNovoUsername("")
+      setNovaSenha("")
       setNovoEmail("")
       setIsAdding(false)
       carregarClientes()
@@ -151,25 +160,69 @@ export function MasterTab() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">E-mail do Administrador</label>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome do Administrador</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
-                  type="email"
-                  value={novoEmail}
-                  onChange={(e) => setNovoEmail(e.target.value)}
-                  placeholder="admin@industria.com"
+                  type="text"
+                  value={novoNome}
+                  onChange={(e) => setNovoNome(e.target.value)}
+                  placeholder="Nome completo"
                   className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
             </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome de Usuário</label>
+              <div className="relative">
+                <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={novoUsername}
+                  onChange={(e) => setNovoUsername(e.target.value)}
+                  placeholder="admin.industria"
+                  autoComplete="off"
+                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground">3 a 40 caracteres, sem espaços ou acentos.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Senha Temporária</label>
+              <div className="relative">
+                <LockKeyhole className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="password"
+                  value={novaSenha}
+                  onChange={(e) => setNovaSenha(e.target.value)}
+                  placeholder="Mínimo de 8 caracteres"
+                  autoComplete="new-password"
+                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5 md:col-span-2">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">E-mail de Contato (opcional)</label>
+              <div className="relative">
+                <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="email"
+                  value={novoEmail}
+                  onChange={(e) => setNovoEmail(e.target.value)}
+                  placeholder="contato@industria.com"
+                  autoComplete="off"
+                  className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground">Não é usado no login e pode ser compartilhado por vários usuários.</p>
+            </div>
           </div>
           <button
-            onClick={handleCriarConvite}
+            onClick={handleCriarAcesso}
             disabled={isCreating}
             className="mt-4 h-10 w-full flex items-center justify-center bg-foreground text-background font-bold text-xs uppercase tracking-widest rounded-xl shadow-md hover:opacity-90 transition-all disabled:opacity-50"
           >
-            {isCreating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Gerando Acesso...</> : "Gerar Convite de Acesso"}
+            {isCreating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Criando Acesso...</> : "Criar Empresa e Administrador"}
           </button>
         </div>
       )}

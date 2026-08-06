@@ -501,7 +501,7 @@ export function AuditoriaTab({ empresaAtivaId }: { empresaAtivaId: string }) {
         {showFilters && (
           <div className="mt-4 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-2 lg:grid-cols-4">
             <FilterField label="Usuário">
-              <input value={filters.usuario} onChange={event => setFilter("usuario", event.target.value)} className="h-9 w-full rounded-lg border border-border bg-input px-3 text-xs" placeholder="Nome ou e-mail" />
+              <input value={filters.usuario} onChange={event => setFilter("usuario", event.target.value)} className="h-9 w-full rounded-lg border border-border bg-input px-3 text-xs" placeholder="Nome ou usuário" />
             </FilterField>
             <FilterField label="Operador">
               <input value={filters.operador} onChange={event => setFilter("operador", event.target.value)} className="h-9 w-full rounded-lg border border-border bg-input px-3 text-xs" placeholder="Nome do operador" />

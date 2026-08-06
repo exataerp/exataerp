@@ -34,7 +34,7 @@ export async function POST(req: Request) {
 
     const { data: equipe, error: equipeError } = await supabaseAdmin
       .from('controle_acesso')
-      .select('*, perfis:user_id(email, nome)')
+      .select('*, perfis:user_id(username, email, nome)')
       .eq('empresa_id', empresa_id)
 
     if (equipeError) throw equipeError

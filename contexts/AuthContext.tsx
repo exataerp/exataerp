@@ -33,11 +33,13 @@ export interface EmpresaInfo {
 export interface SessionData {
   user: {
     id: string
-    email: string
+    username: string
+    email: string | null
     nome: string
     cargo: string | null
     status: string
     first_access_completed: boolean
+    must_change_password: boolean
   }
   empresa: EmpresaInfo
   roles: RoleName[]
@@ -54,7 +56,7 @@ interface AuthContextType {
   loading:       boolean
 
   // Auth actions
-  signIn:        (email: string, senha: string) => Promise<{ error: string | null }>
+  signIn:        (username: string, senha: string) => Promise<{ error: string | null; requiresPasswordChange?: boolean }>
   signOut:       () => Promise<{ error: string | null }>
   reloadSession: () => Promise<void>
 
@@ -97,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Busca perfil
       const { data: perfil } = await supabase
         .from('perfis')
-        .select('id, nome, cargo, status, email, empresa_id, first_access_completed')
+        .select('id, username, nome, cargo, status, email, empresa_id, first_access_completed, must_change_password')
         .eq('user_id', user.id)
         .single()
 
@@ -146,11 +148,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const sessionData: SessionData = {
         user: {
           id:                     perfil.id,
-          email:                  perfil.email ?? user.email ?? '',
+          username:               perfil.username,
+          email:                  perfil.email ?? null,
           nome:                   perfil.nome ?? '',
           cargo:                  perfil.cargo ?? null,
           status:                 perfil.status,
           first_access_completed: perfil.first_access_completed ?? false,
+          must_change_password:   perfil.must_change_password ?? false,
         },
         empresa: empresa ?? {
           id:                   perfil.empresa_id,
@@ -200,12 +204,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ------------------------------------------------------------
   // Actions
   // ------------------------------------------------------------
-  const signIn = async (email: string, senha: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password: senha,
+  const signIn = async (username: string, senha: string) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: senha }),
     })
-    return { error: error?.message ?? null }
+    const result = await response.json()
+    return {
+      error: response.ok ? null : (result.error ?? 'Não foi possível entrar.'),
+      requiresPasswordChange: response.ok ? Boolean(result.requires_password_change) : undefined,
+    }
   }
 
   const signOut = async () => {

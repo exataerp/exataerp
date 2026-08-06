@@ -1,5 +1,9 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import {
+  REQUIRED_PASSWORD_CHANGE_PATH,
+  isRequiredPasswordChangePath,
+} from '@/lib/password-access'
 
 const PUBLIC_ROUTES = [
   '/login',
@@ -52,6 +56,31 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
   const isPublic = PUBLIC_ROUTES.some(r => pathname.startsWith(r))
+
+  if (user) {
+    const { data: passwordProfile } = await supabase
+      .from('perfis')
+      .select('must_change_password')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (passwordProfile?.must_change_password) {
+      if (isRequiredPasswordChangePath(pathname)) return supabaseResponse
+
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { error: 'Troca de senha obrigatória.', code: 'PASSWORD_CHANGE_REQUIRED' },
+          { status: 403 },
+        )
+      }
+
+      return NextResponse.redirect(new URL(REQUIRED_PASSWORD_CHANGE_PATH, request.url), 307)
+    }
+  }
+
+  if (pathname === REQUIRED_PASSWORD_CHANGE_PATH && !user) {
+    return NextResponse.redirect(new URL('/login', request.url), 307)
+  }
 
   if (isPublic) {
     if (user) {
