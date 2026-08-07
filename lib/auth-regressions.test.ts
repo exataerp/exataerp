@@ -2,6 +2,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import {
+  HOMOLOG_ADMIN_UID,
+  HOMOLOG_ADMIN_USERNAME,
+  HOMOLOG_ORIGIN,
+  HOMOLOG_SUPABASE_URL,
+  homologBootstrapAccessStatus,
+  initialHomologAdminBootstrapVersions,
+} from './homolog-admin-bootstrap.ts'
+
 const source = (relativePath: string) => readFileSync(
   new URL(`../${relativePath}`, import.meta.url),
   'utf8',
@@ -82,16 +91,45 @@ test('bootstrap da senha do administrador fica restrito à Preview de homologaç
   const route = source('app/api/internal/homolog/bootstrap-admin-password/route.ts')
   const middleware = source('middleware.ts')
 
-  assert.match(route, /process\.env\.VERCEL !== '1'/)
-  assert.match(route, /process\.env\.VERCEL_ENV !== 'preview'/)
-  assert.match(route, /process\.env\.NEXT_PUBLIC_SUPABASE_URL !== HOMOLOG_SUPABASE_URL/)
-  assert.match(route, /https:\/\/rtiqkivyqgkhinfpcusd\.supabase\.co/)
-  assert.match(route, /request\.headers\.get\('origin'\) !== HOMOLOG_ORIGIN/)
-  assert.match(route, /https:\/\/homologacao\.exataerp\.com/)
-  assert.match(route, /7e22ded1-7712-4b3c-acc8-222aed508b57/)
-  assert.match(route, /HOMOLOG_ADMIN_USERNAME = 'admin'/)
-  assert.match(route, /state\.username !== HOMOLOG_ADMIN_USERNAME/)
+  const validAccess = {
+    vercel: '1',
+    vercelEnv: 'preview',
+    supabaseUrl: HOMOLOG_SUPABASE_URL,
+    origin: HOMOLOG_ORIGIN,
+  }
+  assert.equal(homologBootstrapAccessStatus(validAccess), null)
+  assert.equal(homologBootstrapAccessStatus({ ...validAccess, vercelEnv: 'production' }), 404)
+  assert.equal(homologBootstrapAccessStatus({ ...validAccess, supabaseUrl: 'https://production.supabase.co' }), 503)
+  assert.equal(homologBootstrapAccessStatus({ ...validAccess, origin: 'https://example.com' }), 403)
+  assert.equal(HOMOLOG_ADMIN_UID, '7e22ded1-7712-4b3c-acc8-222aed508b57')
+  assert.equal(HOMOLOG_ADMIN_USERNAME, 'admin')
+  assert.match(route, /homologBootstrapAccessStatus/)
   assert.match(middleware, /pathname === '\/api\/internal\/homolog\/bootstrap-admin-password'\) return NextResponse\.next\(\)/)
+})
+
+test('bootstrap aceita apenas o estado inicial one-shot do admin de homologação', () => {
+  assert.deepEqual(initialHomologAdminBootstrapVersions({
+    username: 'admin',
+    credential_version: 1,
+    state_version: 1,
+    must_change_password: false,
+  }), {
+    credentialVersion: 1,
+    stateVersion: 1,
+    nextCredentialVersion: 2,
+  })
+  assert.equal(initialHomologAdminBootstrapVersions({
+    username: 'admin',
+    credential_version: 2,
+    state_version: 2,
+    must_change_password: true,
+  }), null)
+  assert.equal(initialHomologAdminBootstrapVersions({
+    username: 'outro',
+    credential_version: 1,
+    state_version: 1,
+    must_change_password: false,
+  }), null)
 })
 
 test('bootstrap valida a senha e mantém o estado de credenciais coerente', () => {
@@ -103,7 +141,7 @@ test('bootstrap valida a senha e mantém o estado de credenciais coerente', () =
   assert.match(route, /credential_version: nextCredentialVersion/)
   assert.match(route, /p_expected_state_version: stateVersion/)
   assert.match(route, /p_must_change_password: true/)
-  assert.match(route, /state\.must_change_password !== true/)
+  assert.match(route, /initialHomologAdminBootstrapVersions\(state\)/)
 
   const updateStart = route.indexOf('auth.admin.updateUserById')
   const updateEnd = route.indexOf('if (changed.error)', updateStart)

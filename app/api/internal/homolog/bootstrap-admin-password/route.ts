@@ -8,6 +8,12 @@ import {
 } from '@/lib/auth-http'
 import { consumeSensitiveLimit, postgresRateLimitStore } from '@/lib/auth-rate-limit'
 import {
+  HOMOLOG_ADMIN_UID,
+  HOMOLOG_ADMIN_USERNAME,
+  homologBootstrapAccessStatus,
+  initialHomologAdminBootstrapVersions,
+} from '@/lib/homolog-admin-bootstrap'
+import {
   finishIdentityFailure,
   identityOperationDecision,
   nonSensitiveFingerprint,
@@ -16,19 +22,20 @@ import { supabaseAdmin } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
-const HOMOLOG_ORIGIN = 'https://homologacao.exataerp.com'
-const HOMOLOG_SUPABASE_URL = 'https://rtiqkivyqgkhinfpcusd.supabase.co'
-const HOMOLOG_ADMIN_UID = '7e22ded1-7712-4b3c-acc8-222aed508b57'
-const HOMOLOG_ADMIN_USERNAME = 'admin'
-
 export async function POST(request: Request) {
-  if (process.env.VERCEL !== '1' || process.env.VERCEL_ENV !== 'preview') {
+  const accessStatus = homologBootstrapAccessStatus({
+    vercel: process.env.VERCEL,
+    vercelEnv: process.env.VERCEL_ENV,
+    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    origin: request.headers.get('origin'),
+  })
+  if (accessStatus === 404) {
     return jsonNoStore({ error: 'Rota não encontrada.' }, { status: 404 })
   }
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL !== HOMOLOG_SUPABASE_URL) {
+  if (accessStatus === 503) {
     return jsonNoStore({ error: 'Operação indisponível.' }, { status: 503 })
   }
-  if (request.headers.get('origin') !== HOMOLOG_ORIGIN) {
+  if (accessStatus === 403) {
     return jsonNoStore({ error: 'Origem não permitida.' }, { status: 403 })
   }
 
@@ -56,19 +63,9 @@ export async function POST(request: Request) {
     }
 
     const state = stateResult.data[0]
-    if (state.username !== HOMOLOG_ADMIN_USERNAME || state.must_change_password !== true) {
-      throw new Error('admin_auth_state_mismatch')
-    }
-    const credentialVersion = Number(state.credential_version)
-    const stateVersion = Number(state.state_version)
-    const nextCredentialVersion = credentialVersion + 1
-    if (
-      !Number.isSafeInteger(credentialVersion)
-      || credentialVersion <= 0
-      || !Number.isSafeInteger(stateVersion)
-      || stateVersion <= 0
-      || !Number.isSafeInteger(nextCredentialVersion)
-    ) throw new Error('admin_auth_version_invalid')
+    const versions = initialHomologAdminBootstrapVersions(state)
+    if (!versions) throw new Error('admin_auth_state_mismatch')
+    const { credentialVersion, stateVersion, nextCredentialVersion } = versions
 
     const empresaId = profilesResult.data[0].empresa_id
     const limited = await consumeSensitiveLimit(request, {
