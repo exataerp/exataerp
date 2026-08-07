@@ -57,7 +57,10 @@ export async function getUserRoles(userId: string, empresaId: string): Promise<s
     .eq('user_id', userId)
     .eq('empresa_id', empresaId)
 
-  if (error || !data) return []
+  if (error) {
+    throw new AuthError('Não foi possível consultar os perfis de acesso.', 500)
+  }
+  if (!data) return []
   return data.map((r: any) => r.role_name)
 }
 

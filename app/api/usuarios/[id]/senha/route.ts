@@ -48,10 +48,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const digest = idempotencyDigest(request, {
       operation: 'admin_reset_password', empresaId: principal.empresaId,
       actorUserId: principal.userId, targetUserId,
-    }, fingerprint)
+    })
     const begun = await supabaseAdmin.rpc('begin_identity_operation', {
       p_operation_type: 'admin_reset_password', p_empresa_id: principal.empresaId,
-      p_idempotency_digest: digest, p_actor_user_id: principal.userId,
+      p_idempotency_digest: digest, p_request_fingerprint: fingerprint, p_actor_user_id: principal.userId,
       p_target_user_id: targetUserId, p_username: null,
     })
     if (begun.error || begun.data?.length !== 1) return jsonNoStore({ error: 'Não foi possível iniciar a operação.' }, { status: 409 })

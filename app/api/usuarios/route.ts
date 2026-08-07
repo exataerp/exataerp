@@ -2,6 +2,7 @@ import { buildInternalAuthEmail, normalizeOptionalEmail, normalizeUsername, vali
 import { assertAllowedOrigin, idempotencyDigest, jsonNoStore, readStrictJson, RequestValidationError, safeCorrelationId } from '@/lib/auth-http'
 import { requireCurrentPrincipal, requireSystemManager } from '@/lib/auth-principal'
 import { consumeSensitiveLimit, postgresRateLimitStore } from '@/lib/auth-rate-limit'
+import { compensateCreatedIdentity } from '@/lib/identity-compensation'
 import { finishIdentityFailure, identityOperationDecision, nonSensitiveFingerprint } from '@/lib/identity-operation'
 import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
 
@@ -10,12 +11,14 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   let operationId: string | null = null
   let createdUserId: string | null = null
-  let databaseWritesStarted = false
+  let empresaId: string | null = null
+  let completionUncertain = false
   const correlationId = safeCorrelationId(request)
 
   try {
     assertAllowedOrigin(request)
     const principal = await requireCurrentPrincipal(request)
+    empresaId = principal.empresaId
     requireSystemManager(principal)
     const limited = await consumeSensitiveLimit(request, {
       operation: 'create_user', empresaId: principal.empresaId, actorUserId: principal.userId,
@@ -42,9 +45,10 @@ export async function POST(request: Request) {
     if (rolesError || validRoles?.length !== roles.length) return jsonNoStore({ error: 'Um ou mais perfis de acesso são inválidos.' }, { status: 400 })
 
     const fingerprint = nonSensitiveFingerprint({ username, nome, cargo, roles: [...roles].sort() })
-    const digest = idempotencyDigest(request, { operation: 'create_user', empresaId: principal.empresaId, actorUserId: principal.userId }, fingerprint)
+    const digest = idempotencyDigest(request, { operation: 'create_user', empresaId: principal.empresaId, actorUserId: principal.userId })
     const begun = await supabaseAdmin.rpc('begin_identity_operation', {
       p_operation_type: 'create_user', p_empresa_id: principal.empresaId, p_idempotency_digest: digest,
+      p_request_fingerprint: fingerprint,
       p_actor_user_id: principal.userId, p_target_user_id: null, p_username: username,
     })
     if (begun.error || begun.data?.length !== 1) return jsonNoStore({ error: 'Não foi possível iniciar a operação.' }, { status: 409 })
@@ -59,10 +63,9 @@ export async function POST(request: Request) {
       email: internalEmail, password, email_confirm: true,
       user_metadata: { nome }, app_metadata: { empresa_id: principal.empresaId, login_identifier: 'username' },
     })
-    if (auth.error || !auth.data.user) throw new Error('auth_create_failed')
-    createdUserId = auth.data.user.id
+    createdUserId = auth.data.user?.id ?? null
+    if (auth.error || !createdUserId) throw new Error('auth_create_failed')
 
-    databaseWritesStarted = true
     const profile = await supabaseAdmin.from('perfis').insert({
       id: createdUserId, user_id: createdUserId, empresa_id: principal.empresaId, email, nome, cargo,
       tipo_usuario: 'colaborador', status: 'ativo', first_access_completed: false, updated_at: new Date().toISOString(),
@@ -81,17 +84,26 @@ export async function POST(request: Request) {
       p_operation_id: operationId, p_user_id: createdUserId, p_username: username,
       p_must_change_password: true, p_expected_state_version: null, p_correlation_id: correlationId,
     })
-    if (completed.error) throw new Error('private_state_completion_failed')
+    if (completed.error) {
+      const recovered = await supabaseAdmin.rpc('get_private_auth_state', { p_user_id: createdUserId })
+      if (!recovered.error && recovered.data?.[0]?.username === username) {
+        return jsonNoStore({ success: true, user_id: createdUserId, username, requires_password_change: true }, { status: 201 })
+      }
+      completionUncertain = Boolean(recovered.error)
+      throw new Error('private_state_completion_failed')
+    }
     return jsonNoStore({ success: true, user_id: createdUserId, username, requires_password_change: true }, { status: 201 })
   } catch (error) {
-    if (operationId) {
-      let fullyCompensated = false
-      if (createdUserId && !databaseWritesStarted) {
-        fullyCompensated = !(await supabaseAdmin.auth.admin.deleteUser(createdUserId)).error
-      }
+    if (operationId && empresaId) {
+      const failureStatus = await compensateCreatedIdentity(supabaseAdmin, {
+        userId: createdUserId,
+        empresaId,
+        deleteEmpresa: false,
+        skipCleanup: completionUncertain,
+      })
       try {
         await finishIdentityFailure(supabaseAdmin, {
-          operationId, status: fullyCompensated ? 'failed' : 'compensation_required',
+          operationId, status: failureStatus,
           failureCode: error instanceof Error ? error.message : 'unknown_failure', correlationId,
         })
       } catch { /* fail closed; reconciliation remains mandatory */ }

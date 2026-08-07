@@ -18,7 +18,8 @@ export async function POST(request: Request) {
     const authStates = new Map<string, { username: string; mustChangePassword: boolean }>()
     for (const userId of userIds) {
       const state = await supabaseAdmin.rpc('get_private_auth_state', { p_user_id: userId })
-      if (!state.error && state.data?.length === 1 && typeof state.data[0].username === 'string') {
+      if (state.error) throw state.error
+      if (state.data?.length === 1 && typeof state.data[0].username === 'string') {
         authStates.set(userId, {
           username: state.data[0].username,
           mustChangePassword: Boolean(state.data[0].must_change_password),
@@ -35,15 +36,16 @@ export async function POST(request: Request) {
           }
         : null,
     }))
-    const permissions = userIds.length === 0
-      ? []
-      : (await supabaseAdmin
+    const permissionsResult = userIds.length === 0
+      ? { data: [], error: null }
+      : await supabaseAdmin
           .from('permissoes')
           .select('*')
           .eq('empresa_id', principal.empresaId)
-          .in('user_id', userIds)).data ?? []
+          .in('user_id', userIds)
+    if (permissionsResult.error) throw permissionsResult.error
 
-    return jsonNoStore({ equipe: projectedTeam, permissoes: permissions })
+    return jsonNoStore({ equipe: projectedTeam, permissoes: permissionsResult.data ?? [] })
   } catch (error) {
     if (error instanceof RequestValidationError || error instanceof AuthError) {
       return jsonNoStore({ error: error.message }, { status: error.status })

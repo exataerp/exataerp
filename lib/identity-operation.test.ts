@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { identityOperationDecision, nonSensitiveFingerprint } from './identity-operation.ts'
+import {
+  idempotentResourceId,
+  identityOperationDecision,
+  nonSensitiveFingerprint,
+} from './identity-operation.ts'
 
 const row = (overrides: Partial<Parameters<typeof identityOperationDecision>[0]>) => ({
   operation_id: 'operation',
@@ -32,4 +36,15 @@ test('payload fingerprint is deterministic and rejects sensitive keys', () => {
   )
   assert.throws(() => nonSensitiveFingerprint({ password: 'never-persist-this' }))
   assert.throws(() => nonSensitiveFingerprint({ technical_email: 'opaque' }))
+})
+
+test('resource id is deterministic for an idempotency digest', () => {
+  const firstDigest = 'a'.repeat(64)
+  const secondDigest = 'b'.repeat(64)
+  const resourceId = idempotentResourceId(firstDigest)
+
+  assert.equal(resourceId, idempotentResourceId(firstDigest))
+  assert.notEqual(resourceId, idempotentResourceId(secondDigest))
+  assert.match(resourceId, /^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/)
+  assert.throws(() => idempotentResourceId('not-a-digest'))
 })

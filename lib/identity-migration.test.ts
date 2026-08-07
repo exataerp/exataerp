@@ -26,6 +26,13 @@ test('username is canonical, globally unique and reserved during uncertain compe
   assert.match(migration, /status in\('pending','compensation_required'\)/)
 })
 
+test('idempotency key owns one operation and rejects a different payload', () => {
+  assert.match(migration, /idempotency_digest text not null,request_fingerprint text not null/)
+  assert.match(migration, /unique\(operation_type,empresa_id,actor_user_id,idempotency_digest\)/)
+  assert.match(migration, /request_fingerprint is distinct from p_request_fingerprint/)
+  assert.match(migration, /idempotency payload mismatch/)
+})
+
 test('all privileged functions are fixed-search-path and service-role only', () => {
   const functions = [
     'resolve_login_username',
@@ -54,6 +61,8 @@ test('completion locks state and operation and inserts the outbox in the same fu
   assert.match(body, /user_auth_state where user_id=p_user_id for update/)
   assert.match(body, /state version conflict/)
   assert.match(body, /insert into app_private.identity_audit_outbox/)
+  assert.match(body, /o\.operation_type='create_tenant_admin'[\s\S]*'empresa_id',o\.empresa_id/)
+  assert.match(body, /o\.operation_type='create_user'[\s\S]*'requires_password_change',true/)
 })
 
 test('private JSON rejects common sensitive keys and has size limits', () => {

@@ -80,6 +80,7 @@ export async function requireCurrentPrincipal(
     || accessResult.data?.status !== 'ativo'
     || rolesResult.error
     || stateResult.error
+    || superAdminResult.error
     || stateResult.data?.length !== 1
     || !state
     || typeof state.username !== 'string'
@@ -102,7 +103,7 @@ export async function requireCurrentPrincipal(
     mustChangePassword: Boolean(state.must_change_password),
     credentialVersion: Number(state.credential_version),
     stateVersion: Number(state.state_version),
-    isSuperAdmin: !superAdminResult.error && Boolean(superAdminResult.data),
+    isSuperAdmin: Boolean(superAdminResult.data),
   }
 }
 

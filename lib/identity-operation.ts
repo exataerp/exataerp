@@ -36,6 +36,18 @@ export function nonSensitiveFingerprint(value: Record<string, unknown>) {
   return createHash('sha256').update(canonical).digest('hex')
 }
 
+export function idempotentResourceId(digest: string) {
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Digest idempotente inválido')
+
+  const bytes = Buffer.from(digest.slice(0, 32), 'hex')
+  // UUID v5-shaped identifier. The digest already namespaces the operation,
+  // tenant, actor, target and Idempotency-Key.
+  bytes[6] = (bytes[6] & 0x0f) | 0x50
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString('hex')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 export async function finishIdentityFailure(
   client: SupabaseClient,
   input: {

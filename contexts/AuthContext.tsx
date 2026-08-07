@@ -44,7 +44,7 @@ export interface SessionData {
   empresa: EmpresaInfo
   roles: RoleName[]
   permissions: string[]
-  preferencias: { theme: string; language: string }
+  preferencias: { theme: string; language: string; timezone: string }
 }
 
 // ------------------------------------------------------------

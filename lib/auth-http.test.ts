@@ -88,15 +88,15 @@ test('forwarded IP is trusted only on Vercel and invalid values use one conserva
   else process.env.VERCEL = previous
 })
 
-test('idempotency digest is scoped by tenant, actor, target and fingerprint', () => {
-  const request = () => new Request('https://app.test', {
-    headers: { 'idempotency-key': 'same-key' },
+test('idempotency digest is scoped by key, tenant, actor and target', () => {
+  const request = (key = 'same-key') => new Request('https://app.test', {
+    headers: { 'idempotency-key': key },
   })
   const base = { operation: 'create_user', empresaId: 'tenant-a', actorUserId: 'actor-a' }
-  const digest = idempotencyDigest(request(), base, 'payload-a')
-  assert.equal(digest, idempotencyDigest(request(), base, 'payload-a'))
-  assert.notEqual(digest, idempotencyDigest(request(), { ...base, empresaId: 'tenant-b' }, 'payload-a'))
-  assert.notEqual(digest, idempotencyDigest(request(), { ...base, actorUserId: 'actor-b' }, 'payload-a'))
-  assert.notEqual(digest, idempotencyDigest(request(), { ...base, targetUserId: 'target' }, 'payload-a'))
-  assert.notEqual(digest, idempotencyDigest(request(), base, 'payload-b'))
+  const digest = idempotencyDigest(request(), base)
+  assert.equal(digest, idempotencyDigest(request(), base))
+  assert.notEqual(digest, idempotencyDigest(request(), { ...base, empresaId: 'tenant-b' }))
+  assert.notEqual(digest, idempotencyDigest(request(), { ...base, actorUserId: 'actor-b' }))
+  assert.notEqual(digest, idempotencyDigest(request(), { ...base, targetUserId: 'target' }))
+  assert.notEqual(digest, idempotencyDigest(request('another-key'), base))
 })

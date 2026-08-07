@@ -148,7 +148,6 @@ export function idempotencyDigest(
     actorUserId: string
     targetUserId?: string | null
   },
-  fingerprint: string,
 ) {
   const key = request.headers.get('idempotency-key')?.trim()
   if (!key || key.length > 200) {
@@ -161,7 +160,6 @@ export function idempotencyDigest(
       scope.actorUserId,
       scope.targetUserId ?? '-',
       key,
-      fingerprint,
     ].join('\0'))
     .digest('hex')
 }
