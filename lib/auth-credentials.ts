@@ -1,9 +1,11 @@
 export const USERNAME_MIN_LENGTH = 3
 export const USERNAME_MAX_LENGTH = 40
-export const PASSWORD_MIN_LENGTH = 8
+export const PASSWORD_MIN_LENGTH = 10
+export const PASSWORD_MAX_LENGTH = 128
+export const INVALID_CREDENTIALS_MESSAGE = 'Nome de usuário ou senha incorretos.'
 
 export const PASSWORD_REQUIREMENTS = [
-  { id: 'length', label: 'Mínimo de 8 caracteres', test: (value: string) => value.length >= PASSWORD_MIN_LENGTH },
+  { id: 'length', label: 'De 10 a 128 caracteres', test: (value: string) => value.length >= PASSWORD_MIN_LENGTH && value.length <= PASSWORD_MAX_LENGTH },
   { id: 'uppercase', label: 'Uma letra maiúscula', test: (value: string) => /[A-Z]/.test(value) },
   { id: 'lowercase', label: 'Uma letra minúscula', test: (value: string) => /[a-z]/.test(value) },
   { id: 'number', label: 'Um número', test: (value: string) => /\d/.test(value) },
@@ -30,7 +32,7 @@ export function validatePassword(value: unknown): string | null {
   const password = String(value ?? '')
   if (!password) return 'Senha é obrigatória.'
   if (!PASSWORD_REQUIREMENTS.every((requirement) => requirement.test(password))) {
-    return 'A senha deve ter pelo menos 8 caracteres, com maiúscula, minúscula, número e caractere especial.'
+    return 'A senha deve ter de 10 a 128 caracteres, com maiúscula, minúscula, número e caractere especial.'
   }
   return null
 }
@@ -75,7 +77,7 @@ export function validateOptionalEmail(value: unknown): string | null {
 }
 
 export function buildInternalAuthEmail(seed: string): string {
-  const safeSeed = seed.trim().toLowerCase().replace(/[^a-z0-9-]/g, '')
-  if (!safeSeed) throw new Error('Identificador técnico inválido.')
-  return `user-${safeSeed}@auth.exataerp.invalid`
+  const safeSeed = seed.trim().toLowerCase()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(safeSeed)) throw new Error('Identificador técnico inválido.')
+  return `${safeSeed}@auth.exata.invalid`
 }

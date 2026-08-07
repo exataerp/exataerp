@@ -1,109 +1,90 @@
-import { NextResponse } from 'next/server'
+import { createClient as createIsolatedClient } from '@supabase/supabase-js'
 
 import { validatePasswordChange } from '@/lib/auth-credentials'
-import { supabaseAdmin } from '@/lib/supabase/admin'
+import { assertAllowedOrigin, idempotencyDigest, jsonNoStore, readStrictJson, RequestValidationError, safeCorrelationId } from '@/lib/auth-http'
+import { requireCurrentPrincipal } from '@/lib/auth-principal'
+import { consumeSensitiveLimit, postgresRateLimitStore } from '@/lib/auth-rate-limit'
+import { finishIdentityFailure, identityOperationDecision, nonSensitiveFingerprint } from '@/lib/identity-operation'
+import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
 import { createClient as createSessionClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
-function getUpdateErrorMessage(error: { code?: string; message?: string }) {
-  const message = error.message?.toLowerCase() ?? ''
-  if (error.code === 'same_password' || message.includes('same password')) {
-    return 'A nova senha deve ser diferente da senha atual.'
-  }
-  if (error.code === 'weak_password' || message.includes('weak password')) {
-    return 'A nova senha não atende aos requisitos de segurança.'
-  }
-  if (error.code === 'invalid_credentials' || message.includes('invalid login credentials')) {
-    return 'A senha atual está incorreta.'
-  }
-  return 'Não foi possível alterar a senha. Confirme a senha atual e tente novamente.'
-}
-
 export async function POST(request: Request) {
+  let operationId: string | null = null
+  let authChanged = false
+  const correlationId = safeCorrelationId(request)
   try {
-    const body = await request.json()
+    assertAllowedOrigin(request)
+    const principal = await requireCurrentPrincipal(request, { allowPasswordChange: true })
+    const limited = await consumeSensitiveLimit(request, {
+      operation: 'change_password', empresaId: principal.empresaId,
+      actorUserId: principal.userId, targetUserId: principal.userId,
+    }, postgresRateLimitStore(supabaseAdmin))
+    if (!limited.allowed) return jsonNoStore({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429, headers: { 'Retry-After': String(limited.retryAfter) } })
+
+    const body = await readStrictJson<{ currentPassword?: unknown; newPassword?: unknown; confirmation?: unknown }>(
+      request, ['currentPassword', 'newPassword', 'confirmation'],
+    )
     const currentPassword = String(body.currentPassword ?? '')
     const newPassword = String(body.newPassword ?? '')
-    const confirmation = String(body.confirmation ?? '')
-    const errors = validatePasswordChange(currentPassword, newPassword, confirmation)
+    const errors = validatePasswordChange(currentPassword, newPassword, body.confirmation)
+    if (Object.keys(errors).length) return jsonNoStore({ error: Object.values(errors)[0] }, { status: 400 })
 
-    if (Object.keys(errors).length > 0) {
-      return NextResponse.json(
-        { error: Object.values(errors)[0] },
-        { status: 400 },
-      )
-    }
-
-    const supabase = await createSessionClient()
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      return NextResponse.json({ error: 'Sessão inválida ou expirada.' }, { status: 401 })
-    }
-
-    const { data: perfil, error: perfilError } = await supabaseAdmin
-      .from('perfis')
-      .select('id, empresa_id')
-      .eq('user_id', user.id)
-      .single()
-
-    if (perfilError || !perfil) {
-      return NextResponse.json({ error: 'Perfil não encontrado.' }, { status: 404 })
-    }
-
-    const { error: passwordError } = await supabase.auth.updateUser({
-      current_password: currentPassword,
-      password: newPassword,
+    const fingerprint = nonSensitiveFingerprint({ credential_version: principal.credentialVersion })
+    const digest = idempotencyDigest(request, {
+      operation: 'change_password', empresaId: principal.empresaId,
+      actorUserId: principal.userId, targetUserId: principal.userId,
+    }, fingerprint)
+    const begun = await supabaseAdmin.rpc('begin_identity_operation', {
+      p_operation_type: 'change_password', p_empresa_id: principal.empresaId,
+      p_idempotency_digest: digest, p_actor_user_id: principal.userId,
+      p_target_user_id: principal.userId, p_username: null,
     })
+    if (begun.error || begun.data?.length !== 1) return jsonNoStore({ error: 'Não foi possível iniciar a operação.' }, { status: 409 })
+    const operation = begun.data[0]
+    operationId = operation.operation_id
+    const decision = identityOperationDecision(operation)
+    if (decision.kind === 'replay') return jsonNoStore({ success: true, requires_login: true })
+    if (decision.kind === 'conflict') return jsonNoStore({ error: 'Operação já está em andamento ou requer reconciliação.' }, { status: 409 })
 
-    if (passwordError) {
-      await supabaseAdmin.from('authentication_logs').insert({
-        company_id: perfil.empresa_id,
-        user_id: user.id,
-        event_type: 'alteracao_senha_usuario',
-        success: false,
-        failure_reason: passwordError.code ?? 'auth_error',
-      })
-      return NextResponse.json({ error: getUpdateErrorMessage(passwordError) }, { status: 400 })
+    const authUser = await supabaseAdmin.auth.admin.getUserById(principal.userId)
+    const technicalEmail = authUser.data.user?.email
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    if (authUser.error || !technicalEmail || !url || !anonKey) throw new Error('reauth_configuration_failed')
+    const isolated = createIsolatedClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } })
+    const reauthenticated = await isolated.auth.signInWithPassword({ email: technicalEmail, password: currentPassword })
+    await isolated.auth.signOut({ scope: 'local' })
+    if (reauthenticated.error) {
+      await finishIdentityFailure(supabaseAdmin, { operationId: operation.operation_id, status: 'failed', failureCode: 'current_password_invalid', correlationId })
+      operationId = null
+      return jsonNoStore({ error: 'A senha atual está incorreta.' }, { status: 400 })
     }
 
-    const changedAt = new Date().toISOString()
-    const { error: profileUpdateError } = await supabaseAdmin
-      .from('perfis')
-      .update({
-        first_access_completed: true,
-        must_change_password: false,
-        password_changed_at: changedAt,
-        password_reset_required_at: null,
-        password_reset_by: null,
-        updated_at: changedAt,
-      })
-      .eq('user_id', user.id)
-
-    if (profileUpdateError) {
-      await supabaseAdmin.from('authentication_logs').insert({
-        company_id: perfil.empresa_id,
-        user_id: user.id,
-        event_type: 'alteracao_senha_usuario',
-        success: false,
-        failure_reason: 'profile_sync_failed',
-      })
-      return NextResponse.json(
-        { error: 'A senha foi alterada, mas o perfil não foi sincronizado. Contate o administrador.' },
-        { status: 500 },
-      )
-    }
-
-    await supabaseAdmin.from('authentication_logs').insert({
-      company_id: perfil.empresa_id,
-      user_id: user.id,
-      event_type: 'alteracao_senha_usuario',
-      success: true,
+    const changed = await supabaseAdmin.auth.admin.updateUserById(principal.userId, { password: newPassword })
+    if (changed.error) throw new Error('auth_password_update_failed')
+    authChanged = true
+    const completed = await supabaseAdmin.rpc('upsert_private_auth_state', {
+      p_operation_id: operationId, p_user_id: principal.userId, p_username: null,
+      p_must_change_password: false, p_expected_state_version: principal.stateVersion,
+      p_correlation_id: correlationId,
     })
+    if (completed.error) throw new Error('private_state_completion_failed')
 
-    await supabase.auth.signOut({ scope: 'global' })
-    return NextResponse.json({ success: true })
-  } catch {
-    return NextResponse.json({ error: 'Não foi possível alterar a senha agora.' }, { status: 500 })
+    const session = await createSessionClient()
+    await session.auth.signOut({ scope: 'global' })
+    return jsonNoStore({ success: true, requires_login: true })
+  } catch (error) {
+    if (operationId) {
+      try {
+        await finishIdentityFailure(supabaseAdmin, {
+          operationId, status: authChanged ? 'compensation_required' : 'failed',
+          failureCode: error instanceof Error ? error.message : 'unknown_failure', correlationId,
+        })
+      } catch { /* fail closed */ }
+    }
+    if (error instanceof RequestValidationError || error instanceof AuthError) return jsonNoStore({ error: error.message }, { status: error.status })
+    return jsonNoStore({ error: 'Não foi possível alterar a senha agora.' }, { status: 500 })
   }
 }

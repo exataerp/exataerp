@@ -57,7 +57,11 @@ export function MasterTab() {
       const headers = await authHeader()
       const res = await fetch('/api/admin/fabricas', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...headers },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+          ...headers,
+        },
         body: JSON.stringify({ id, status: novoStatus }),
       })
       const json = await res.json()

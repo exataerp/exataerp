@@ -6,7 +6,7 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test --test-isolation=none lib/scheduled-breaks.test.ts lib/production-flow.test.ts lib/production-metrics.test.ts lib/integrity-flow.test.ts lib/order-deletion.test.ts lib/permissions.test.ts lib/audit.test.ts lib/apontamento-selection.test.ts",
+    "test": "node --experimental-strip-types --test --test-isolation=none lib/*.test.ts",
     "test:production-flow": "node --experimental-strip-types --test --test-isolation=none lib/production-flow.test.ts",
     "test:scheduled-breaks": "node --experimental-strip-types --test --test-isolation=none lib/scheduled-breaks.test.ts",
     "typecheck": "tsc --noEmit",
