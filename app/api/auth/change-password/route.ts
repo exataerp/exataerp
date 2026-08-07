@@ -62,9 +62,22 @@ export async function POST(request: Request) {
       return jsonNoStore({ error: 'A senha atual está incorreta.' }, { status: 400 })
     }
 
-    const changed = await supabaseAdmin.auth.admin.updateUserById(principal.userId, { password: newPassword })
+    const nextCredentialVersion = principal.credentialVersion + 1
+    const changed = await supabaseAdmin.auth.admin.updateUserById(principal.userId, {
+      password: newPassword,
+      app_metadata: {
+        ...authUser.data.user.app_metadata,
+        credential_version: nextCredentialVersion,
+      },
+    })
     if (changed.error) throw new Error('auth_password_update_failed')
     authChanged = true
+    const firstAccess = await supabaseAdmin
+      .from('perfis')
+      .update({ first_access_completed: true, updated_at: new Date().toISOString() })
+      .eq('user_id', principal.userId)
+      .eq('empresa_id', principal.empresaId)
+    if (firstAccess.error) throw new Error('first_access_completion_failed')
     const completed = await supabaseAdmin.rpc('upsert_private_auth_state', {
       p_operation_id: operationId, p_user_id: principal.userId, p_username: null,
       p_must_change_password: false, p_expected_state_version: principal.stateVersion,

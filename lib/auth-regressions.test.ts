@@ -57,3 +57,23 @@ test('consulta de permissões da equipe não ignora erro', () => {
   const route = source('app/api/admin/equipe/route.ts')
   assert.match(route, /if \(permissionsResult\.error\) throw permissionsResult\.error/)
 })
+
+test('criação mantém o username legado e inicia credential version no Auth', () => {
+  for (const routePath of ['app/api/usuarios/route.ts', 'app/api/admin/nova-fabrica/route.ts']) {
+    const route = source(routePath)
+    assert.match(route, /login_identifier: 'username', credential_version: 1/)
+    assert.match(route, /user_id: [^,]+, (?:empresa_id: [^,]+, )?username,/)
+  }
+})
+
+test('troca de senha incrementa a credential version e o principal valida o token', () => {
+  const ownPassword = source('app/api/auth/change-password/route.ts')
+  const adminPassword = source('app/api/usuarios/[id]/senha/route.ts')
+  const principal = source('lib/auth-principal.ts')
+
+  assert.match(ownPassword, /credential_version: nextCredentialVersion/)
+  assert.match(ownPassword, /first_access_completed: true/)
+  assert.match(adminPassword, /credential_version: Number\(state\.credential_version\) \+ 1/)
+  assert.match(principal, /credentialVersionFromAccessToken/)
+  assert.match(principal, /credentialVersion !== verified\.credentialVersion/)
+})

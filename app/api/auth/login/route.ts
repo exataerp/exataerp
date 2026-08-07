@@ -39,6 +39,21 @@ export async function POST(request: Request) {
     if (company.error || company.data?.status !== 'ativo' || access.error || access.data?.status !== 'ativo'
       || auth.error || !auth.data.user?.email) return invalidCredentials()
 
+    const credentialVersion = Number(authState.credential_version)
+    const rawAuthCredentialVersion = auth.data.user.app_metadata?.credential_version
+    const authCredentialVersion = typeof rawAuthCredentialVersion === 'number'
+      ? rawAuthCredentialVersion
+      : Number.NaN
+    if (!Number.isSafeInteger(credentialVersion) || credentialVersion <= 0) return invalidCredentials()
+    if (!Number.isSafeInteger(authCredentialVersion) || authCredentialVersion <= 0) {
+      const initialized = await supabaseAdmin.auth.admin.updateUserById(authState.user_id, {
+        app_metadata: { ...auth.data.user.app_metadata, credential_version: credentialVersion },
+      })
+      if (initialized.error) return invalidCredentials()
+    } else if (authCredentialVersion !== credentialVersion) {
+      return invalidCredentials()
+    }
+
     const sessionClient = await createClient()
     const signedIn = await sessionClient.auth.signInWithPassword({ email: auth.data.user.email, password })
     if (signedIn.error || !signedIn.data.session || signedIn.data.user.id !== authState.user_id) {

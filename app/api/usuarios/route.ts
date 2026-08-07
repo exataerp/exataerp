@@ -61,13 +61,14 @@ export async function POST(request: Request) {
     const internalEmail = buildInternalAuthEmail(crypto.randomUUID())
     const auth = await supabaseAdmin.auth.admin.createUser({
       email: internalEmail, password, email_confirm: true,
-      user_metadata: { nome }, app_metadata: { empresa_id: principal.empresaId, login_identifier: 'username' },
+      user_metadata: { nome },
+      app_metadata: { empresa_id: principal.empresaId, login_identifier: 'username', credential_version: 1 },
     })
     createdUserId = auth.data.user?.id ?? null
     if (auth.error || !createdUserId) throw new Error('auth_create_failed')
 
     const profile = await supabaseAdmin.from('perfis').insert({
-      id: createdUserId, user_id: createdUserId, empresa_id: principal.empresaId, email, nome, cargo,
+      id: createdUserId, user_id: createdUserId, empresa_id: principal.empresaId, username, email, nome, cargo,
       tipo_usuario: 'colaborador', status: 'ativo', first_access_completed: false, updated_at: new Date().toISOString(),
     })
     if (profile.error) throw new Error('profile_create_failed')

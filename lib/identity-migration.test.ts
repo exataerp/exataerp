@@ -3,9 +3,31 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const migration = readFileSync(
-  new URL('../supabase/migrations/20260806113406_login_por_nome_de_usuario.sql', import.meta.url),
+  new URL('../supabase/migrations/20260807020000_estado_privado_autenticacao_username.sql', import.meta.url),
   'utf8',
 )
+
+const publicUsernameMigration = readFileSync(
+  new URL('../supabase/migrations/20260806115051_login_por_nome_de_usuario.sql', import.meta.url),
+  'utf8',
+)
+
+const outboxIndexMigration = readFileSync(
+  new URL('../supabase/migrations/20260807022000_index_identity_audit_outbox_operation_id.sql', import.meta.url),
+  'utf8',
+)
+
+const authStateFixMigration = readFileSync(
+  new URL('../supabase/migrations/20260807023000_corrige_ambiguidade_upsert_auth_state.sql', import.meta.url),
+  'utf8',
+)
+
+test('migration history keeps the already-applied public username step separate', () => {
+  assert.match(publicUsernameMigration, /add column if not exists username text/)
+  assert.match(publicUsernameMigration, /perfis_username_lower_key/)
+  assert.doesNotMatch(publicUsernameMigration, /app_private/)
+  assert.doesNotMatch(publicUsernameMigration, /must_change_password|password_changed_at|password_reset_required_at/)
+})
 
 test('migration is expansion-only and keeps authentication state private', () => {
   assert.match(migration, /create schema app_private/)
@@ -71,4 +93,14 @@ test('private JSON rejects common sensitive keys and has size limits', () => {
   }
   assert.match(migration, /octet_length\(result::text\)<=4096/)
   assert.match(migration, /octet_length\(payload::text\)<=2048/)
+})
+
+test('identity audit outbox foreign key has a covering index', () => {
+  assert.match(outboxIndexMigration, /identity_audit_outbox_operation_id_idx/)
+  assert.match(outboxIndexMigration, /identity_audit_outbox \(operation_id\)/)
+})
+
+test('upsert qualifies identity operation state version', () => {
+  assert.match(authStateFixMigration, /update app_private\.identity_operations as io set/)
+  assert.match(authStateFixMigration, /state_version=io\.state_version\+1/)
 })

@@ -64,13 +64,14 @@ export async function POST(request: Request) {
     if (role.error || !role.data) throw new Error('administrator_role_missing')
     const auth = await supabaseAdmin.auth.admin.createUser({
       email: buildInternalAuthEmail(crypto.randomUUID()), password, email_confirm: true,
-      user_metadata: { nome: name }, app_metadata: { empresa_id: createdEmpresaId, login_identifier: 'username' },
+      user_metadata: { nome: name },
+      app_metadata: { empresa_id: createdEmpresaId, login_identifier: 'username', credential_version: 1 },
     })
     userId = auth.data.user?.id ?? null
     if (auth.error || !userId) throw new Error('auth_create_failed')
 
     const profile = await supabaseAdmin.from('perfis').insert({
-      id: userId, user_id: userId, email: contactEmail, nome: name, status: 'ativo', empresa_id: createdEmpresaId,
+      id: userId, user_id: userId, username, email: contactEmail, nome: name, status: 'ativo', empresa_id: createdEmpresaId,
       tipo_usuario: 'admin', first_access_completed: false, updated_at: new Date().toISOString(),
     })
     if (profile.error) throw new Error('profile_create_failed')

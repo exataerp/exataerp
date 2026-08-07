@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js'
 
 import { assertUsernameRolloutEnabled } from '@/lib/auth-http'
+import { credentialVersionFromAccessToken } from '@/lib/auth-token'
 import { createClient as createSessionClient } from '@/lib/supabase/server'
 import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
 
@@ -20,7 +21,7 @@ export type CurrentPrincipal = {
   isSuperAdmin: boolean
 }
 
-async function verifiedUser(request: Request): Promise<User> {
+async function verifiedUser(request: Request): Promise<{ user: User; credentialVersion: number }> {
   const authorization = request.headers.get('authorization')
   if (authorization) {
     if (!authorization.startsWith('Bearer ') || authorization.length <= 7) {
@@ -28,13 +29,22 @@ async function verifiedUser(request: Request): Promise<User> {
     }
     const { data, error } = await supabaseAdmin.auth.getUser(authorization.slice(7))
     if (error || !data.user) throw new AuthError('Sessão inválida.', 401)
-    return data.user
+    const credentialVersion = credentialVersionFromAccessToken(authorization.slice(7))
+    if (credentialVersion === null) throw new AuthError('Sessão inválida.', 401)
+    return { user: data.user, credentialVersion }
   }
 
   const sessionClient = await createSessionClient()
   const { data, error } = await sessionClient.auth.getUser()
   if (error || !data.user) throw new AuthError('Sessão inválida.', 401)
-  return data.user
+  // getUser above verifies the session with Auth before getSession is used only
+  // to read the signed access token and its credential-version claim.
+  const session = await sessionClient.auth.getSession()
+  const credentialVersion = session.data.session
+    ? credentialVersionFromAccessToken(session.data.session.access_token)
+    : null
+  if (session.error || credentialVersion === null) throw new AuthError('Sessão inválida.', 401)
+  return { user: data.user, credentialVersion }
 }
 
 export async function requireCurrentPrincipal(
@@ -42,7 +52,8 @@ export async function requireCurrentPrincipal(
   options: { allowPasswordChange?: boolean } = {},
 ): Promise<CurrentPrincipal> {
   assertUsernameRolloutEnabled()
-  const user = await verifiedUser(request)
+  const verified = await verifiedUser(request)
+  const user = verified.user
 
   const { data: profiles, error: profileError } = await supabaseAdmin
     .from('perfis')
@@ -86,6 +97,12 @@ export async function requireCurrentPrincipal(
     || typeof state.username !== 'string'
   ) throw new AuthError('Acesso negado.', 403)
 
+  const credentialVersion = Number(state.credential_version)
+  if (
+    credentialVersion !== verified.credentialVersion
+    || Number(user.app_metadata?.credential_version) !== verified.credentialVersion
+  ) throw new AuthError('Sessão inválida.', 401)
+
   if (state.must_change_password && !options.allowPasswordChange) {
     throw new AuthError('Troca de senha obrigatória.', 403)
   }
@@ -101,7 +118,7 @@ export async function requireCurrentPrincipal(
     companyStatus: 'ativo',
     accessStatus: 'ativo',
     mustChangePassword: Boolean(state.must_change_password),
-    credentialVersion: Number(state.credential_version),
+    credentialVersion,
     stateVersion: Number(state.state_version),
     isSuperAdmin: Boolean(superAdminResult.data),
   }

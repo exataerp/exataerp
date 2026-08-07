@@ -61,7 +61,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (decision.kind === 'replay') return jsonNoStore({ success: true, requires_password_change: true })
     if (decision.kind === 'conflict') return jsonNoStore({ error: 'Operação já está em andamento ou requer reconciliação.' }, { status: 409 })
 
-    const changed = await supabaseAdmin.auth.admin.updateUserById(targetUserId, { password: temporaryPassword })
+    const authUser = await supabaseAdmin.auth.admin.getUserById(targetUserId)
+    if (authUser.error || !authUser.data.user) throw new Error('auth_user_lookup_failed')
+    const changed = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+      password: temporaryPassword,
+      app_metadata: {
+        ...authUser.data.user.app_metadata,
+        credential_version: Number(state.credential_version) + 1,
+      },
+    })
     if (changed.error) throw new Error('auth_reset_failed')
     authChanged = true
     const completed = await supabaseAdmin.rpc('upsert_private_auth_state', {
