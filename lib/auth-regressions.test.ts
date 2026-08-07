@@ -77,3 +77,53 @@ test('troca de senha incrementa a credential version e o principal valida o toke
   assert.match(principal, /credentialVersionFromAccessToken/)
   assert.match(principal, /credentialVersion !== verified\.credentialVersion/)
 })
+
+test('bootstrap da senha do administrador fica restrito à Preview de homologação', () => {
+  const route = source('app/api/internal/homolog/bootstrap-admin-password/route.ts')
+  const middleware = source('middleware.ts')
+
+  assert.match(route, /process\.env\.VERCEL !== '1'/)
+  assert.match(route, /process\.env\.VERCEL_ENV !== 'preview'/)
+  assert.match(route, /process\.env\.NEXT_PUBLIC_SUPABASE_URL !== HOMOLOG_SUPABASE_URL/)
+  assert.match(route, /https:\/\/rtiqkivyqgkhinfpcusd\.supabase\.co/)
+  assert.match(route, /request\.headers\.get\('origin'\) !== HOMOLOG_ORIGIN/)
+  assert.match(route, /https:\/\/homologacao\.exataerp\.com/)
+  assert.match(route, /7e22ded1-7712-4b3c-acc8-222aed508b57/)
+  assert.match(route, /HOMOLOG_ADMIN_USERNAME = 'admin'/)
+  assert.match(route, /state\.username !== HOMOLOG_ADMIN_USERNAME/)
+  assert.match(middleware, /pathname === '\/api\/internal\/homolog\/bootstrap-admin-password'\) return NextResponse\.next\(\)/)
+})
+
+test('bootstrap valida a senha e mantém o estado de credenciais coerente', () => {
+  const route = source('app/api/internal/homolog/bootstrap-admin-password/route.ts')
+
+  assert.match(route, /readStrictJson<\{ password\?: unknown \}>\(request, \['password'\]\)/)
+  assert.match(route, /validatePassword\(bootstrapPassword\)/)
+  assert.match(route, /auth\.admin\.updateUserById\(HOMOLOG_ADMIN_UID/)
+  assert.match(route, /credential_version: nextCredentialVersion/)
+  assert.match(route, /p_expected_state_version: stateVersion/)
+  assert.match(route, /p_must_change_password: true/)
+  assert.match(route, /state\.must_change_password !== true/)
+
+  const updateStart = route.indexOf('auth.admin.updateUserById')
+  const updateEnd = route.indexOf('if (changed.error)', updateStart)
+  assert.ok(updateStart >= 0 && updateEnd > updateStart)
+  const updateCall = route.slice(updateStart, updateEnd)
+  assert.match(updateCall, /password: bootstrapPassword/)
+  assert.match(updateCall, /\.\.\.authUser\.data\.user\.app_metadata/)
+  assert.doesNotMatch(updateCall, /\b(?:email|user_metadata|empresa_id|roles|permissions)\s*:/)
+})
+
+test('bootstrap não usa SQL Auth, senha fixa, service role direta ou logs de credenciais', () => {
+  const route = source('app/api/internal/homolog/bootstrap-admin-password/route.ts')
+
+  assert.doesNotMatch(route, /auth\.users/i)
+  assert.doesNotMatch(route, /\b(?:bootstrapPassword|password)\s*=\s*['"`][^'"`]+/)
+  assert.doesNotMatch(route, /SUPABASE_SERVICE_ROLE_KEY/)
+  assert.doesNotMatch(route, /console\.(?:log|info|warn|error|debug)/)
+
+  const fingerprintStart = route.indexOf('nonSensitiveFingerprint({')
+  const fingerprintEnd = route.indexOf('})', fingerprintStart)
+  assert.ok(fingerprintStart >= 0 && fingerprintEnd > fingerprintStart)
+  assert.doesNotMatch(route.slice(fingerprintStart, fingerprintEnd), /\b(?:password|senha)\b/i)
+})

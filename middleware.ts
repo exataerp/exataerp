@@ -21,6 +21,8 @@ const ROTAS_RESTRITAS: Record<string, string[]> = {
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
+  if (pathname === '/api/internal/homolog/bootstrap-admin-password') return NextResponse.next()
+
   // Esta rota recebe e valida explicitamente o Bearer token. Deixá-la passar
   // aqui evita que uma sessão em renovação seja convertida em redirect HTML
   // antes que o endpoint possa sincronizar o intervalo programado.
