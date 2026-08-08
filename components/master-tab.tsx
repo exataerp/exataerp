@@ -2,12 +2,10 @@
 
 import React, { useState, useEffect, useCallback } from "react"
 import { ShieldAlert, Users, Plus, Building2, AtSign, UserRound, LockKeyhole, Power, RefreshCw, Loader2 } from "lucide-react"
-import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { suggestTenantSlug } from "@/lib/tenant-host"
 
 export function MasterTab() {
-  const supabase = createClient()
   const { toast } = useToast()
 
   const [isAdding, setIsAdding] = useState(false)
@@ -23,31 +21,25 @@ export function MasterTab() {
   const [novoEmail, setNovoEmail] = useState("")
   const [isCreating, setIsCreating] = useState(false)
 
-  const authHeader = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    return { Authorization: `Bearer ${session?.access_token ?? ''}` }
-  }, [supabase])
-
   const carregarClientes = useCallback(async () => {
     setIsLoading(true)
     try {
-      const headers = await authHeader()
-      const res = await fetch('/api/admin/fabricas', { headers })
+      const res = await fetch('/api/admin/fabricas', { cache: 'no-store' })
       const json = await res.json()
 
       if (res.status === 403) {
         setAcessoNegado(true)
         return
       }
-      if (!res.ok) throw new Error(json.error ?? 'Erro ao carregar fábricas.')
+      if (!res.ok) throw new Error(json.error ?? 'Erro ao carregar empresas.')
 
       setClientes(json.empresas ?? [])
     } catch (error: any) {
-      toast({ title: "Erro de conexão", description: error.message ?? "Não foi possível carregar as fábricas.", variant: "destructive" })
+      toast({ title: "Erro de conexão", description: error.message ?? "Não foi possível carregar as empresas.", variant: "destructive" })
     } finally {
       setIsLoading(false)
     }
-  }, [authHeader, toast])
+  }, [toast])
 
   useEffect(() => {
     carregarClientes()
@@ -56,20 +48,18 @@ export function MasterTab() {
   const toggleStatus = async (id: string, currentStatus: string) => {
     const novoStatus = currentStatus === "inativo" ? "ativo" : "inativo"
     try {
-      const headers = await authHeader()
       const res = await fetch('/api/admin/fabricas', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': crypto.randomUUID(),
-          ...headers,
         },
         body: JSON.stringify({ id, status: novoStatus }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Erro ao alterar status.')
 
-      toast({ title: "Comando executado", description: `O acesso da fábrica foi alterado para ${novoStatus.toUpperCase()}.` })
+      toast({ title: "Comando executado", description: `O acesso da empresa foi alterado para ${novoStatus.toUpperCase()}.` })
       carregarClientes()
     } catch (error: any) {
       toast({ title: "Falha na execução", description: error.message, variant: "destructive" })
@@ -84,10 +74,9 @@ export function MasterTab() {
 
     setIsCreating(true)
     try {
-      const headers = await authHeader()
       const response = await fetch('/api/admin/nova-fabrica', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), ...headers },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
         body: JSON.stringify({
           nomeFabrica: novaEmpresa.trim(),
           subdomain: novoSubdominio.trim(),
@@ -101,7 +90,7 @@ export function MasterTab() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || "Erro desconhecido ao criar acesso.")
 
-      toast({ title: "Fábrica Operacional", description: `Acesso disponível em https://${result.subdomain}.exataerp.com.` })
+      toast({ title: "Cadastro criado", description: `Empresa e administrador criados. O acesso já está disponível em ${result.subdomain}.exataerp.com.` })
       setNovaEmpresa("")
       setNovoSubdominio("")
       setNovoNome("")
@@ -133,9 +122,9 @@ export function MasterTab() {
         <div>
           <h2 className="text-xl font-black text-foreground uppercase tracking-tight flex items-center gap-2">
             <ShieldAlert className="h-6 w-6 text-primary" />
-            Painel Master
+            Cadastro de Empresas
           </h2>
-          <p className="text-sm text-muted-foreground mt-1">Gestão absoluta de clientes, assinaturas e níveis de acesso.</p>
+          <p className="text-sm text-muted-foreground mt-1">Área exclusiva do superadmin para cadastrar clientes e controlar seus acessos.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={carregarClientes} className="h-10 w-10 flex items-center justify-center bg-muted text-foreground rounded-xl shadow-sm hover:opacity-90 transition-all" title="Atualizar lista">
@@ -152,7 +141,7 @@ export function MasterTab() {
 
       {isAdding && (
         <div className="bg-card border border-border p-6 rounded-2xl shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
-          <h3 className="text-sm font-bold uppercase tracking-widest mb-4">Credenciar Nova Fábrica</h3>
+          <h3 className="text-sm font-bold uppercase tracking-widest mb-4">Cadastrar Nova Empresa</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome da Empresa</label>
@@ -258,7 +247,7 @@ export function MasterTab() {
         <div className="px-6 py-4 border-b border-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-sm font-bold text-foreground">Fábricas Operando</h3>
+            <h3 className="text-sm font-bold text-foreground">Empresas Cadastradas</h3>
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground bg-muted px-2 py-1 rounded-md">
             {clientes.length} {clientes.length === 1 ? 'Registro' : 'Registros'}
@@ -287,7 +276,7 @@ export function MasterTab() {
                 ) : clientes.length === 0 ? (
                   <tr>
                     <td colSpan={5} className="px-6 py-8 text-center text-xs text-muted-foreground font-bold uppercase tracking-widest">
-                      Nenhuma fábrica encontrada
+                      Nenhuma empresa encontrada
                     </td>
                   </tr>
                 ) : (

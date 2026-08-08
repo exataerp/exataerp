@@ -26,7 +26,7 @@ import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
   Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users,
-  Plus, Trash2, Pause, FileSearch
+  Plus, Trash2, Pause, FileSearch, ShieldCheck,
 } from "lucide-react"
 
 type TabId = AbaId
@@ -82,7 +82,7 @@ const NOVO_INTERVALO_PADRAO: Omit<IntervaloTurno, "execution_order"> = {
 }
 
 export default function ExataApp() {
-  const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager } = useAuth()
+  const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager, isSuperAdmin } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
   const username       = session?.user?.username ?? ""
@@ -856,6 +856,16 @@ export default function ExataApp() {
                 onClick={() => goTab("configuracoes")}
               />
             )}
+            {isSuperAdmin && (
+              <Link
+                href="/admin"
+                title="Cadastro de empresas"
+                className={`flex items-center rounded-xl text-primary transition-all hover:bg-primary/10 ${collapsed ? "h-10 justify-center px-2" : "gap-3 px-3 py-2.5"}`}
+              >
+                <ShieldCheck className="h-4 w-4 flex-shrink-0" />
+                {!collapsed && <span className="text-xs font-bold">Empresas</span>}
+              </Link>
+            )}
             <Link
               href="/alterar-senha"
               title="Alterar senha"
@@ -983,6 +993,16 @@ export default function ExataApp() {
                   </span>
                 </div>
               </button>
+            )}
+            {isSuperAdmin && (
+              <Link
+                href="/admin"
+                onClick={() => setMobileOpen(false)}
+                className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-primary transition-all hover:bg-primary/10"
+              >
+                <ShieldCheck className="h-5 w-5 flex-shrink-0" />
+                <span className="text-sm font-bold">Cadastro de empresas</span>
+              </Link>
             )}
             <Link
               href="/alterar-senha"
