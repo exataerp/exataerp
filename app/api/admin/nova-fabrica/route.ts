@@ -5,6 +5,7 @@ import { consumeSensitiveLimit, postgresRateLimitStore } from '@/lib/auth-rate-l
 import { compensateCreatedIdentity } from '@/lib/identity-compensation'
 import { finishIdentityFailure, idempotentResourceId, identityOperationDecision, nonSensitiveFingerprint } from '@/lib/identity-operation'
 import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
+import { normalizeTenantSlug, validateTenantSlug } from '@/lib/tenant-host'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,19 +24,21 @@ export async function POST(request: Request) {
     }, postgresRateLimitStore(supabaseAdmin))
     if (!limited.allowed) return jsonNoStore({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429, headers: { 'Retry-After': String(limited.retryAfter) } })
 
-    const body = await readStrictJson<{ nomeFabrica?: unknown; nome?: unknown; username?: unknown; password?: unknown; email?: unknown }>(
-      request, ['nomeFabrica', 'nome', 'username', 'password', 'email'],
+    const body = await readStrictJson<{ nomeFabrica?: unknown; nome?: unknown; subdomain?: unknown; username?: unknown; password?: unknown; email?: unknown }>(
+      request, ['nomeFabrica', 'nome', 'subdomain', 'username', 'password', 'email'],
     )
     const companyName = String(body.nomeFabrica ?? '').trim()
+    const subdomain = normalizeTenantSlug(body.subdomain)
     const name = String(body.nome ?? '').trim() || 'Administrador'
     const username = normalizeUsername(body.username)
     const password = String(body.password ?? '')
     const contactEmail = normalizeOptionalEmail(body.email)
     const validationError = (!companyName ? 'Nome da empresa é obrigatório.' : null)
+      ?? validateTenantSlug(subdomain)
       ?? validateUsername(username) ?? validatePassword(password) ?? validateOptionalEmail(contactEmail)
     if (validationError) return jsonNoStore({ error: validationError }, { status: 400 })
 
-    const fingerprint = nonSensitiveFingerprint({ company_name: companyName, username, administrator_name: name })
+    const fingerprint = nonSensitiveFingerprint({ company_name: companyName, subdomain, username, administrator_name: name })
     const digest = idempotencyDigest(request, {
       operation: 'create_tenant_admin', empresaId: principal.empresaId, actorUserId: principal.userId,
     })
@@ -56,7 +59,7 @@ export async function POST(request: Request) {
     }
 
     const company = await supabaseAdmin.from('empresas').insert({
-      id: createdEmpresaId, nome: companyName, status: 'ativo',
+      id: createdEmpresaId, nome: companyName, subdomain, status: 'ativo',
     })
     if (company.error) throw new Error('company_create_failed')
 
@@ -91,12 +94,12 @@ export async function POST(request: Request) {
     if (completed.error) {
       const recovered = await supabaseAdmin.rpc('get_private_auth_state', { p_user_id: userId })
       if (!recovered.error && recovered.data?.[0]?.username === username) {
-        return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, status: 'completed' }, { status: 201 })
+        return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, subdomain, status: 'completed' }, { status: 201 })
       }
       completionUncertain = Boolean(recovered.error)
       throw new Error('private_state_completion_failed')
     }
-    return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, status: 'completed' }, { status: 201 })
+    return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, subdomain, status: 'completed' }, { status: 201 })
   } catch (error) {
     if (operationId && empresaId) {
       const failureStatus = await compensateCreatedIdentity(supabaseAdmin, {

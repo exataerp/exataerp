@@ -4,6 +4,7 @@ import {
   REQUIRED_PASSWORD_CHANGE_PATH,
   isPublicAuthApiPath,
 } from '@/lib/password-access'
+import { tenantSlugFromHostname, withTrustedTenantHeader } from '@/lib/tenant-host'
 
 const PUBLIC_PAGE_ROUTES = new Set([
   '/login',
@@ -18,8 +19,13 @@ const ROTAS_RESTRITAS: Record<string, string[]> = {
   '/usuarios':      ['system_manager'],
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname
+  const tenantSlug = tenantSlugFromHostname(
+    request.headers.get('host') ?? request.nextUrl.hostname,
+    process.env.APP_ROOT_DOMAIN,
+  )
+  const trustedRequestHeaders = () => withTrustedTenantHeader(request.headers, tenantSlug)
 
   if (pathname === '/api/internal/homolog/bootstrap-admin-password') return NextResponse.next()
 
@@ -33,7 +39,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  let supabaseResponse = NextResponse.next({ request })
+  let supabaseResponse = NextResponse.next({
+    request: { headers: trustedRequestHeaders() },
+  })
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -47,7 +55,9 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           )
-          supabaseResponse = NextResponse.next({ request })
+          supabaseResponse = NextResponse.next({
+            request: { headers: trustedRequestHeaders() },
+          })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           )

@@ -2,6 +2,8 @@ import { createHash, createHmac, randomUUID } from 'node:crypto'
 
 import { NextResponse } from 'next/server.js'
 
+import { tenantSlugFromHostname } from './tenant-host.ts'
+
 export const AUTH_RESPONSE_HEADERS = {
   'Cache-Control': 'private, no-store',
   Pragma: 'no-cache',
@@ -89,7 +91,22 @@ export function assertAllowedOrigin(request: Request) {
   } catch {
     throw new RequestValidationError(503, 'Operação indisponível.')
   }
-  if (!allowed.has(origin)) throw new RequestValidationError(403)
+  const isConfiguredTenantOrigin = parsedTenantOrigin(origin)
+  if (!allowed.has(origin) && !isConfiguredTenantOrigin) throw new RequestValidationError(403)
+}
+
+function parsedTenantOrigin(origin: string): boolean {
+  const rootDomain = process.env.APP_ROOT_DOMAIN
+  if (!rootDomain) return false
+
+  try {
+    const parsed = new URL(origin)
+    return parsed.protocol === 'https:'
+      && parsed.port === ''
+      && tenantSlugFromHostname(parsed.hostname, rootDomain) !== null
+  } catch {
+    return false
+  }
 }
 
 export async function readStrictJson<T extends Record<string, unknown>>(

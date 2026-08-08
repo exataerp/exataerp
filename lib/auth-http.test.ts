@@ -41,7 +41,9 @@ test('allowed origins are canonical, exact URLs without wildcards', () => {
 
 test('origin authorization rejects lookalike and missing origins', () => {
   const previous = process.env.APP_ALLOWED_ORIGINS
+  const previousRootDomain = process.env.APP_ROOT_DOMAIN
   process.env.APP_ALLOWED_ORIGINS = 'https://app.test,https://hml.test'
+  process.env.APP_ROOT_DOMAIN = 'exataerp.com'
   assert.doesNotThrow(() => assertAllowedOrigin(new Request('https://app.test', {
     headers: { origin: 'https://app.test' },
   })))
@@ -49,8 +51,22 @@ test('origin authorization rejects lookalike and missing origins', () => {
     headers: { origin: 'https://app.test.evil' },
   })))
   assert.throws(() => assertAllowedOrigin(new Request('https://app.test')))
+  assert.doesNotThrow(() => assertAllowedOrigin(new Request('https://mairo.exataerp.com', {
+    headers: { origin: 'https://mairo.exataerp.com' },
+  })))
+  for (const disallowedOrigin of [
+    'http://mairo.exataerp.com',
+    'https://nested.mairo.exataerp.com',
+    'https://mairo.exataerp.com.evil',
+  ]) {
+    assert.throws(() => assertAllowedOrigin(new Request('https://app.test', {
+      headers: { origin: disallowedOrigin },
+    })))
+  }
   if (previous === undefined) delete process.env.APP_ALLOWED_ORIGINS
   else process.env.APP_ALLOWED_ORIGINS = previous
+  if (previousRootDomain === undefined) delete process.env.APP_ROOT_DOMAIN
+  else process.env.APP_ROOT_DOMAIN = previousRootDomain
 })
 
 test('strict JSON rejects unexpected fields, media types and oversized payloads', async () => {

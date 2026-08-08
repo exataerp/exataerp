@@ -4,6 +4,7 @@ import { assertUsernameRolloutEnabled } from '@/lib/auth-http'
 import { credentialVersionFromAccessToken } from '@/lib/auth-token'
 import { createClient as createSessionClient } from '@/lib/supabase/server'
 import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
+import { requestMatchesCompanyTenant } from '@/lib/tenant-host'
 
 export type CurrentPrincipal = {
   user: User
@@ -67,7 +68,7 @@ export async function requireCurrentPrincipal(
   if (profile.status !== 'ativo' || !profile.empresa_id) throw new AuthError('Acesso negado.', 403)
 
   const [companyResult, accessResult, rolesResult, stateResult, superAdminResult] = await Promise.all([
-    supabaseAdmin.from('empresas').select('status').eq('id', profile.empresa_id).maybeSingle(),
+    supabaseAdmin.from('empresas').select('status, subdomain').eq('id', profile.empresa_id).maybeSingle(),
     supabaseAdmin
       .from('controle_acesso')
       .select('status')
@@ -87,6 +88,7 @@ export async function requireCurrentPrincipal(
   if (
     companyResult.error
     || companyResult.data?.status !== 'ativo'
+    || !requestMatchesCompanyTenant(request, companyResult.data.subdomain)
     || accessResult.error
     || accessResult.data?.status !== 'ativo'
     || rolesResult.error

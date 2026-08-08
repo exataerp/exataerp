@@ -3,6 +3,7 @@ import { assertAllowedOrigin, assertUsernameRolloutEnabled, jsonNoStore, readStr
 import { consumeLoginLimits, postgresRateLimitStore } from '@/lib/auth-rate-limit'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { requestMatchesCompanyTenant } from '@/lib/tenant-host'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,11 +33,13 @@ export async function POST(request: Request) {
     if (profiles.error || profiles.data?.length !== 1 || profiles.data[0].status !== 'ativo') return invalidCredentials()
     const profile = profiles.data[0]
     const [company, access, auth] = await Promise.all([
-      supabaseAdmin.from('empresas').select('status').eq('id', profile.empresa_id).maybeSingle(),
+      supabaseAdmin.from('empresas').select('status, subdomain').eq('id', profile.empresa_id).maybeSingle(),
       supabaseAdmin.from('controle_acesso').select('status').eq('user_id', authState.user_id).eq('empresa_id', profile.empresa_id).maybeSingle(),
       supabaseAdmin.auth.admin.getUserById(authState.user_id),
     ])
-    if (company.error || company.data?.status !== 'ativo' || access.error || access.data?.status !== 'ativo'
+    if (company.error || company.data?.status !== 'ativo'
+      || !requestMatchesCompanyTenant(request, company.data.subdomain)
+      || access.error || access.data?.status !== 'ativo'
       || auth.error || !auth.data.user?.email) return invalidCredentials()
 
     const credentialVersion = Number(authState.credential_version)
