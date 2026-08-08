@@ -33,16 +33,18 @@ export interface EmpresaInfo {
 export interface SessionData {
   user: {
     id: string
-    email: string
+    username: string
+    email: string | null
     nome: string
     cargo: string | null
     status: string
     first_access_completed: boolean
+    must_change_password: boolean
   }
   empresa: EmpresaInfo
   roles: RoleName[]
   permissions: string[]
-  preferencias: { theme: string; language: string }
+  preferencias: { theme: string; language: string; timezone: string }
 }
 
 // ------------------------------------------------------------
@@ -54,7 +56,7 @@ interface AuthContextType {
   loading:       boolean
 
   // Auth actions
-  signIn:        (email: string, senha: string) => Promise<{ error: string | null }>
+  signIn:        (username: string, senha: string) => Promise<{ error: string | null; requiresPasswordChange?: boolean }>
   signOut:       () => Promise<{ error: string | null }>
   reloadSession: () => Promise<void>
 
@@ -94,88 +96,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadSession = useCallback(async (user: User) => {
     try {
-      // Busca perfil
-      const { data: perfil } = await supabase
-        .from('perfis')
-        .select('id, nome, cargo, status, email, empresa_id, first_access_completed')
-        .eq('user_id', user.id)
-        .single()
-
-      if (!perfil) {
-        setSession(null)
-        setSupabaseUser(user)
-        setLoading(false)
-        return
-      }
-
-      // Busca empresa
-      const { data: empresa } = await supabase
-        .from('empresas')
-        .select('id, nome, status, onboarding_completed, plano')
-        .eq('id', perfil.empresa_id)
-        .single()
-
-      // Busca roles via view (RLS garante que só vê os próprios)
-      const { data: rolesData, error: rolesError } = await supabase
-        .from('v_user_roles')
-        .select('role_name')
-        .eq('user_id', user.id)
-        .eq('empresa_id', perfil.empresa_id)
-
-      if (rolesError) {
-        throw new Error(`Não foi possível carregar as permissões: ${rolesError.message}`)
-      }
-
-      const roles = (rolesData ?? []).map((r: any) => r.role_name as RoleName)
-
-      const { data: auditPermissionsData } = await supabase
-        .rpc('minhas_permissoes_auditoria', { p_empresa_id: perfil.empresa_id })
-
-      const permissions = Array.from(new Set([
-        ...(auditPermissionsData ?? []).map((item: any) => item.permission_code as string),
-        ...(roles.includes('system_manager') ? ALL_AUDIT_PERMISSIONS : []),
-      ]))
-
-      // Busca preferências
-      const { data: prefs } = await supabase
-        .from('user_preferences')
-        .select('theme, language')
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      const sessionData: SessionData = {
-        user: {
-          id:                     perfil.id,
-          email:                  perfil.email ?? user.email ?? '',
-          nome:                   perfil.nome ?? '',
-          cargo:                  perfil.cargo ?? null,
-          status:                 perfil.status,
-          first_access_completed: perfil.first_access_completed ?? false,
-        },
-        empresa: empresa ?? {
-          id:                   perfil.empresa_id,
-          nome:                 '',
-          status:               'ativo',
-          onboarding_completed: false,
-          plano:                'free',
-        },
-        roles,
-        permissions,
-        preferencias: {
-          theme:    prefs?.theme    ?? 'dark',
-          language: prefs?.language ?? 'pt-BR',
-        },
-      }
-
+      const response = await fetch('/api/auth/session', {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+      })
+      if (!response.ok) throw new Error('Sessão indisponível')
+      const sessionData = await response.json() as SessionData
       setSession(sessionData)
       setSupabaseUser(user)
     } catch {
       setSession(null)
-      setSupabaseUser(user)
+      setSupabaseUser(null)
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -200,17 +135,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ------------------------------------------------------------
   // Actions
   // ------------------------------------------------------------
-  const signIn = async (email: string, senha: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password: senha,
+  const signIn = async (username: string, senha: string) => {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password: senha }),
     })
-    return { error: error?.message ?? null }
+    const result = await response.json()
+    return {
+      error: response.ok ? null : (result.error ?? 'Não foi possível entrar.'),
+      requiresPasswordChange: response.ok ? Boolean(result.requires_password_change) : undefined,
+    }
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut({ scope: 'local' })
-    if (error) return { error: error.message }
+    const response = await fetch('/api/auth/logout', { method: 'POST' })
+    if (!response.ok) return { error: 'Não foi possível sair.' }
 
     setSession(null)
     setSupabaseUser(null)

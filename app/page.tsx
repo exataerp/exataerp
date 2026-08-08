@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react"
+import Link from "next/link"
 import { useTheme } from "next-themes"
 import { supabase } from "@/components/supabase"
 import { useAuth } from "@/contexts/AuthContext"
@@ -18,12 +19,13 @@ import { ManutencaoTab } from "@/components/manutencao-tab"
 import { EquipeTab } from "@/components/equipe-tab"
 import { AuditoriaTab } from "@/components/auditoria-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
+import { PasswordChangeForm } from "@/components/auth/password-change-form"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
 import {
   Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
   CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users, ShieldCheck,
+  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users,
   Plus, Trash2, Pause, FileSearch
 } from "lucide-react"
 
@@ -83,6 +85,7 @@ export default function ExataApp() {
   const { session, loading: authLoading, signOut, canAccess, visibleTabs, isSystemManager } = useAuth()
   const empresaAtivaId = session?.empresa?.id ?? null
   const empresaName    = session?.empresa?.nome ?? ""
+  const username       = session?.user?.username ?? ""
   const userEmail      = session?.user?.email ?? ""
   const visibleNavItems = NAV_ITEMS.filter(item => canAccess(item.id))
 
@@ -119,7 +122,6 @@ export default function ExataApp() {
   const [mobileOpen,   setMobileOpen]   = useState(false)
   const [mounted,      setMounted]      = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [isSendingPasswordReset, setIsSendingPasswordReset] = useState(false)
   const [showAlertas,  setShowAlertas]  = useState(false)
   const [alertas,      setAlertas]      = useState<{ id: string; tipo: "critico" | "atencao"; titulo: string; descricao: string; tab?: TabId }[]>([])
   const canAccessActiveTab = visibleTabs.includes(activeTab)
@@ -277,31 +279,6 @@ export default function ExataApp() {
       setIsSigningOut(false)
     }
   }
-
-  const handleResetPassword = async () => {
-    if (!userEmail || isSendingPasswordReset) return
-
-    setIsSendingPasswordReset(true)
-    const { error } = await supabase.auth.resetPasswordForEmail(userEmail.toLowerCase(), {
-      redirectTo: `${window.location.origin}/recuperar-senha`,
-    })
-    setIsSendingPasswordReset(false)
-
-    if (error) {
-      toast({
-        title: "Não foi possível enviar o link",
-        description: error.message,
-        variant: "destructive",
-      })
-      return
-    }
-
-    toast({
-      title: "Link de redefinição enviado",
-      description: `Confira a caixa de entrada de ${userEmail}.`,
-    })
-  }
-
 
   const carregarConfFabrica = async (empId: string) => {
     // 1. Tenta carregar do cache local da empresa primeiro para resposta imediata
@@ -879,6 +856,14 @@ export default function ExataApp() {
                 onClick={() => goTab("configuracoes")}
               />
             )}
+            <Link
+              href="/alterar-senha"
+              title="Alterar senha"
+              className={`flex items-center rounded-xl text-muted-foreground transition-all hover:bg-muted hover:text-foreground ${collapsed ? "h-10 justify-center px-2" : "gap-3 px-3 py-2.5"}`}
+            >
+              <Key className="h-4 w-4 flex-shrink-0" />
+              {!collapsed && <span className="text-xs font-bold">Minha senha</span>}
+            </Link>
             <button
               onClick={handleSair}
               disabled={isSigningOut}
@@ -999,6 +984,13 @@ export default function ExataApp() {
                 </div>
               </button>
             )}
+            <Link
+              href="/alterar-senha"
+              className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-muted-foreground transition-all hover:bg-muted hover:text-foreground"
+            >
+              <Key className="h-5 w-5 flex-shrink-0" />
+              <span className="text-sm font-bold">Minha senha</span>
+            </Link>
             <button
               onClick={handleSair}
               disabled={isSigningOut}
@@ -1415,38 +1407,30 @@ export default function ExataApp() {
                     </div>
                     <div className="p-6 space-y-4">
                       <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">E-mail</label>
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Nome de Usuário</label>
                         <input
-                          type="email"
-                          value={userEmail}
+                          type="text"
+                          value={username}
                           readOnly
                           aria-readonly="true"
                           className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default"
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Senha</label>
+                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">E-mail de Contato</label>
                         <input
                           type="text"
-                          value="••••••••••••"
+                          value={userEmail || 'Não informado'}
                           readOnly
                           aria-readonly="true"
-                          aria-label="Senha cadastrada e protegida"
-                          className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm tracking-[0.2em] outline-none cursor-default"
+                          className="w-full h-10 px-4 rounded-xl border border-border bg-muted/40 text-foreground text-sm outline-none cursor-default"
                         />
+                        <p className="text-[10px] text-muted-foreground">Opcional; não é utilizado para entrar no sistema.</p>
                       </div>
-                      <p className="text-[10px] leading-relaxed text-muted-foreground">
-                        As credenciais são somente para consulta. Para trocar a senha, enviaremos um link seguro ao e-mail cadastrado.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleResetPassword}
-                        disabled={!userEmail || isSendingPasswordReset}
-                        className="w-full h-11 flex items-center justify-center gap-2 bg-primary text-primary-foreground font-bold uppercase tracking-widest text-[11px] rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <ShieldCheck className="h-4 w-4" />
-                        {isSendingPasswordReset ? "Enviando link..." : "Redefinir senha"}
-                      </button>
+                      <div className="border-t border-border pt-4">
+                        <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Alterar senha</p>
+                        <PasswordChangeForm />
+                      </div>
                     </div>
                   </div>
 
@@ -1505,7 +1489,7 @@ export default function ExataApp() {
                         { title: "Manutenção", desc: "Gerencie ordens de serviço corretivas e preventivas por ativo. Status atualizável diretamente na lista." },
                         { title: "Relatórios", desc: "OEE por máquina, refugo por produto, ciclo real vs planejado, consumo de materiais e ranking de paradas. Filtros por período." },
                         { title: "Dashboard", desc: "Visão em tempo real: status das máquinas, OPs em andamento com progresso, estoque crítico e produção por máquina. Auto-refresh a cada 2 minutos." },
-                        { title: "Credenciais de Acesso", desc: "O e-mail identifica o usuário no login. Para trocar a senha, solicite um link seguro de redefinição nas configurações." },
+                        { title: "Credenciais de Acesso", desc: "O nome de usuário identifica a conta no login. O e-mail é apenas um contato opcional e a senha é administrada pela empresa." },
                       ].map(({ title, desc }) => (
                         <div key={title} className="space-y-1 border-l-2 border-primary/30 pl-3">
                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{title}</p>
