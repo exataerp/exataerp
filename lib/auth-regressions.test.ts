@@ -28,7 +28,7 @@ test('proxy deixa APIs de autenticação responderem sem redirect HTML', () => {
 
 test('sessão entrega o contrato completo e falha quando consultas falham', () => {
   const session = source('app/api/auth/session/route.ts')
-  for (const field of ['user', 'empresa', 'roles', 'permissions', 'preferencias']) {
+  for (const field of ['user', 'empresa', 'roles', 'is_super_admin', 'permissions', 'preferencias']) {
     assert.match(session, new RegExp(`${field}:?`))
   }
   for (const checkedError of [
@@ -39,6 +39,34 @@ test('sessão entrega o contrato completo e falha quando consultas falham', () =
     'userPermissionsResult.error',
     'rolePermissionsResult.error',
   ]) assert.ok(session.includes(checkedError), `erro ignorado: ${checkedError}`)
+})
+
+test('painel master é protegido no servidor e suas APIs exigem superadmin', () => {
+  const page = source('app/admin/page.tsx')
+  const companiesRoute = source('app/api/admin/fabricas/route.ts')
+  const tenantRoute = source('app/api/admin/nova-fabrica/route.ts')
+
+  assert.doesNotMatch(page, /["']use client["']/)
+  assert.match(page, /requireCurrentPrincipal/)
+  assert.match(page, /requireSuperAdmin/)
+  assert.match(companiesRoute, /requireCurrentPrincipal/)
+  assert.match(companiesRoute, /requireSuperAdmin/)
+  assert.match(companiesRoute, /assertAllowedOrigin/)
+  assert.match(tenantRoute, /requireSuperAdmin/)
+})
+
+test('superadmin global usa uma fonte canônica, única e inacessível pelo cliente', () => {
+  const migration = source('supabase/migrations/20260808020808_restringe_superadmin_global_unico.sql')
+
+  assert.match(migration, /super_admins_singleton_key[\s\S]*on public\.super_admins \(\(true\)\)/)
+  assert.match(migration, /delete from public\.controle_acesso[\s\S]*ca\.nivel = 'master'[\s\S]*public\.super_admins/)
+  assert.match(migration, /create or replace function public\.is_master\(\)[\s\S]*from public\.super_admins/)
+  const functionStart = migration.indexOf('create or replace function public.is_master()')
+  const functionEnd = migration.indexOf('$$;', functionStart)
+  assert.ok(functionStart >= 0 && functionEnd > functionStart)
+  assert.doesNotMatch(migration.slice(functionStart, functionEnd), /controle_acesso|nivel/)
+  assert.match(migration, /revoke all on table public\.super_admins from anon, authenticated/)
+  assert.match(migration, /create policy super_admins_server_only[\s\S]*using \(false\)[\s\S]*with check \(false\)/)
 })
 
 test('empresa é criada somente depois da reserva idempotente', () => {

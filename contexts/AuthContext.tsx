@@ -44,6 +44,7 @@ export interface SessionData {
   }
   empresa: EmpresaInfo
   roles: RoleName[]
+  is_super_admin: boolean
   permissions: string[]
   preferencias: { theme: string; language: string; timezone: string }
 }
@@ -67,6 +68,7 @@ interface AuthContextType {
   canAccess:        (aba: AbaId) => boolean
   visibleTabs:      AbaId[]
   isSystemManager:  boolean
+  isSuperAdmin:     boolean
 }
 
 // ------------------------------------------------------------
@@ -84,6 +86,7 @@ const AuthContext = createContext<AuthContextType>({
   canAccess:      () => false,
   visibleTabs:    [],
   isSystemManager: false,
+  isSuperAdmin:    false,
 })
 
 // ------------------------------------------------------------
@@ -191,6 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         : podeAcessarAba(userRoles, aba),
       visibleTabs:     tabs,
       isSystemManager: isSystemManager(userRoles),
+      isSuperAdmin:    session?.is_super_admin === true,
     }}>
       {children}
     </AuthContext.Provider>

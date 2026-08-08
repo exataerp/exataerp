@@ -76,6 +76,7 @@ export async function GET(request: Request) {
       },
       empresa: company,
       roles: principal.roles,
+      is_super_admin: principal.isSuperAdmin,
       permissions,
       preferencias: preferences ?? { theme: 'dark', language: 'pt-BR', timezone: 'America/Sao_Paulo' },
     })
