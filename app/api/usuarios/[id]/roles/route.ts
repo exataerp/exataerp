@@ -10,12 +10,13 @@ export const dynamic = 'force-dynamic'
 
 // Helpers para obter empresa do caller
 async function getCallerEmpresa(callerId: string): Promise<string> {
-  const { data: perfil } = await supabaseAdmin
+  const { data: perfil, error } = await supabaseAdmin
     .from('perfis')
     .select('empresa_id')
     .eq('user_id', callerId)
-    .single()
+    .maybeSingle()
 
+  if (error) throw new AuthError('Não foi possível consultar a empresa.', 500)
   if (!perfil?.empresa_id) throw new AuthError('Empresa não encontrada.', 404)
   return perfil.empresa_id
 }
@@ -74,20 +75,22 @@ export async function POST(
       .from('roles')
       .select('id')
       .eq('name', role_name)
-      .single()
+      .maybeSingle()
 
-    if (roleErr || !role) {
+    if (roleErr) throw roleErr
+    if (!role) {
       return NextResponse.json({ error: `Perfil de acesso '${role_name}' não encontrado.` }, { status: 404 })
     }
 
     // Garante que o usuário alvo pertence à mesma empresa
-    const { data: targetPerfil } = await supabaseAdmin
+    const { data: targetPerfil, error: targetPerfilError } = await supabaseAdmin
       .from('perfis')
       .select('id')
       .eq('user_id', id)
       .eq('empresa_id', empresaId)
-      .single()
+      .maybeSingle()
 
+    if (targetPerfilError) throw targetPerfilError
     if (!targetPerfil) {
       return NextResponse.json(
         { error: 'Usuário não encontrado nesta empresa.' },
@@ -151,12 +154,13 @@ export async function DELETE(
       )
     }
 
-    const { data: role } = await supabaseAdmin
+    const { data: role, error: roleError } = await supabaseAdmin
       .from('roles')
       .select('id')
       .eq('name', role_name)
-      .single()
+      .maybeSingle()
 
+    if (roleError) throw roleError
     if (!role) {
       return NextResponse.json({ error: `Perfil de acesso '${role_name}' não encontrado.` }, { status: 404 })
     }

@@ -76,11 +76,19 @@ export function EquipeTab() {
 
     // Membros, roles e postos são carregados em lote para evitar N+1.
     const [{ data: perfis }, { data: postosData }, { data: vinculos }, { data: equipesData }, { data: equipeMembros }, { data: equipePostos }, { data: turnosData }] = await Promise.all([
-      supabase
-      .from('perfis')
-      .select('id, user_id, username, email, nome, status, must_change_password')
-      .eq('empresa_id', empresaId)
-      .order('nome'),
+      fetch('/api/admin/equipe', { method: 'POST' })
+        .then(async (response) => {
+          if (!response.ok) return { data: [] }
+          const payload = await response.json()
+          return {
+            data: (payload.equipe ?? []).map((member: any) => ({
+              id: member.user_id,
+              user_id: member.user_id,
+              status: member.status,
+              ...member.perfis,
+            })),
+          }
+        }),
       supabase.from('maquinas').select('id, codigo, nome, status').eq('empresa_id', empresaId).eq('status', 'ativa').order('nome'),
       supabase.from('usuario_postos_trabalho').select('user_id, maquina_id').eq('empresa_id', empresaId),
       supabase.from('equipes').select('id, nome, descricao, turno_id').eq('empresa_id', empresaId).eq('ativo', true).order('nome'),
@@ -164,6 +172,7 @@ export function EquipeTab() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          'Idempotency-Key': crypto.randomUUID(),
         },
         body: JSON.stringify({
           username: usernameCadastro.trim(),
@@ -276,6 +285,7 @@ export function EquipeTab() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${currentSession?.access_token ?? ''}`,
+          'Idempotency-Key': crypto.randomUUID(),
         },
         body: JSON.stringify({ password: resetPassword }),
       })

@@ -36,10 +36,10 @@ test('valida a troca de senha com senha atual e confirmação', () => {
   assert.deepEqual(validatePasswordChange('Atual@2026', 'Atual@2026', 'Atual@2026'), {
     newPassword: 'A nova senha deve ser diferente da senha atual.',
   })
-  assert.deepEqual(validatePasswordChange('Atual@2026', 'Nova@2026', 'Outra@2026'), {
+  assert.deepEqual(validatePasswordChange('Atual@2026', 'Nova@2026!', 'Outra@2026'), {
     confirmation: 'As senhas informadas não são iguais.',
   })
-  assert.deepEqual(validatePasswordChange('Atual@2026', 'Nova@2026', 'Nova@2026'), {})
+  assert.deepEqual(validatePasswordChange('Atual@2026', 'Nova@2026!', 'Nova@2026!'), {})
 })
 
 test('aceita e-mail de contato vazio e normaliza um e-mail informado', () => {
@@ -51,7 +51,7 @@ test('aceita e-mail de contato vazio e normaliza um e-mail informado', () => {
 
 test('gera credencial Auth técnica em domínio que não recebe e-mails', () => {
   assert.equal(
-    buildInternalAuthEmail('123e4567-e89b-12d3-a456-426614174000'),
-    'user-123e4567-e89b-12d3-a456-426614174000@auth.exataerp.invalid',
+    buildInternalAuthEmail('123e4567-e89b-42d3-a456-426614174000'),
+    '123e4567-e89b-42d3-a456-426614174000@auth.exata.invalid',
   )
 })

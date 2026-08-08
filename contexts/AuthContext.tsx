@@ -44,7 +44,7 @@ export interface SessionData {
   empresa: EmpresaInfo
   roles: RoleName[]
   permissions: string[]
-  preferencias: { theme: string; language: string }
+  preferencias: { theme: string; language: string; timezone: string }
 }
 
 // ------------------------------------------------------------
@@ -96,90 +96,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadSession = useCallback(async (user: User) => {
     try {
-      // Busca perfil
-      const { data: perfil } = await supabase
-        .from('perfis')
-        .select('id, username, nome, cargo, status, email, empresa_id, first_access_completed, must_change_password')
-        .eq('user_id', user.id)
-        .single()
-
-      if (!perfil) {
-        setSession(null)
-        setSupabaseUser(user)
-        setLoading(false)
-        return
-      }
-
-      // Busca empresa
-      const { data: empresa } = await supabase
-        .from('empresas')
-        .select('id, nome, status, onboarding_completed, plano')
-        .eq('id', perfil.empresa_id)
-        .single()
-
-      // Busca roles via view (RLS garante que só vê os próprios)
-      const { data: rolesData, error: rolesError } = await supabase
-        .from('v_user_roles')
-        .select('role_name')
-        .eq('user_id', user.id)
-        .eq('empresa_id', perfil.empresa_id)
-
-      if (rolesError) {
-        throw new Error(`Não foi possível carregar as permissões: ${rolesError.message}`)
-      }
-
-      const roles = (rolesData ?? []).map((r: any) => r.role_name as RoleName)
-
-      const { data: auditPermissionsData } = await supabase
-        .rpc('minhas_permissoes_auditoria', { p_empresa_id: perfil.empresa_id })
-
-      const permissions = Array.from(new Set([
-        ...(auditPermissionsData ?? []).map((item: any) => item.permission_code as string),
-        ...(roles.includes('system_manager') ? ALL_AUDIT_PERMISSIONS : []),
-      ]))
-
-      // Busca preferências
-      const { data: prefs } = await supabase
-        .from('user_preferences')
-        .select('theme, language')
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      const sessionData: SessionData = {
-        user: {
-          id:                     perfil.id,
-          username:               perfil.username,
-          email:                  perfil.email ?? null,
-          nome:                   perfil.nome ?? '',
-          cargo:                  perfil.cargo ?? null,
-          status:                 perfil.status,
-          first_access_completed: perfil.first_access_completed ?? false,
-          must_change_password:   perfil.must_change_password ?? false,
-        },
-        empresa: empresa ?? {
-          id:                   perfil.empresa_id,
-          nome:                 '',
-          status:               'ativo',
-          onboarding_completed: false,
-          plano:                'free',
-        },
-        roles,
-        permissions,
-        preferencias: {
-          theme:    prefs?.theme    ?? 'dark',
-          language: prefs?.language ?? 'pt-BR',
-        },
-      }
-
+      const response = await fetch('/api/auth/session', {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+      })
+      if (!response.ok) throw new Error('Sessão indisponível')
+      const sessionData = await response.json() as SessionData
       setSession(sessionData)
       setSupabaseUser(user)
     } catch {
       setSession(null)
-      setSupabaseUser(user)
+      setSupabaseUser(null)
     } finally {
       setLoading(false)
     }
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
@@ -218,8 +149,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut({ scope: 'local' })
-    if (error) return { error: error.message }
+    const response = await fetch('/api/auth/logout', { method: 'POST' })
+    if (!response.ok) return { error: 'Não foi possível sair.' }
 
     setSession(null)
     setSupabaseUser(null)

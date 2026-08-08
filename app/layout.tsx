@@ -1,18 +1,10 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
 import { GeistMono } from "geist/font/mono"
 import "./globals.css"
 import { Toaster } from "@/components/ui/toaster"
 import { ThemeProvider } from "next-themes"
 import { AuthProvider } from "@/contexts/AuthContext"
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-})
 
 export const metadata: Metadata = {
   title: "Exata | Gerenciamento & PCP",
@@ -26,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" suppressHydrationWarning>
-      <body className={`font-sans ${inter.variable} ${GeistMono.variable}`}>
+      <body className={`font-sans ${GeistMono.variable}`}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
           <AuthProvider>
             {children}
@@ -37,4 +29,3 @@ export default function RootLayout({
     </html>
   )
 }
-

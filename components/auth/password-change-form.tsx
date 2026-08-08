@@ -37,7 +37,10 @@ export function PasswordChangeForm({ forced = false }: PasswordChangeFormProps) 
     try {
       const response = await fetch('/api/auth/change-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': crypto.randomUUID(),
+        },
         body: JSON.stringify({ currentPassword, newPassword, confirmation }),
       })
       const result = await response.json()

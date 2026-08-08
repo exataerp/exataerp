@@ -31,29 +31,35 @@ export async function requireAuditPermission(
     throw new AuthError("Acesso negado: o tenant solicitado não pertence à sessão.", 403)
   }
 
-  const { data: roleLinks } = await supabaseAdmin
+  const { data: roleLinks, error: roleLinksError } = await supabaseAdmin
     .from("user_roles")
     .select("role_id")
     .eq("user_id", user.id)
     .eq("empresa_id", perfil.empresa_id)
 
-  const roleIds = (roleLinks ?? []).map(link => link.role_id)
-  const { data: rolesData } = roleIds.length > 0
-    ? await supabaseAdmin.from("roles").select("id, name").in("id", roleIds)
-    : { data: [] as { id: string; name: string }[] }
+  if (roleLinksError) throw new AuthError('Não foi possível consultar os perfis de acesso.', 500)
 
-  const { data: rolePermissions } = roleIds.length > 0
+  const roleIds = (roleLinks ?? []).map(link => link.role_id)
+  const { data: rolesData, error: rolesError } = roleIds.length > 0
+    ? await supabaseAdmin.from("roles").select("id, name").in("id", roleIds)
+    : { data: [] as { id: string; name: string }[], error: null }
+
+  const { data: rolePermissions, error: rolePermissionsError } = roleIds.length > 0
     ? await supabaseAdmin
         .from("role_permissions")
         .select("permission_code")
         .in("role_id", roleIds)
-    : { data: [] as { permission_code: string }[] }
+    : { data: [] as { permission_code: string }[], error: null }
 
-  const { data: userPermissions } = await supabaseAdmin
+  const { data: userPermissions, error: userPermissionsError } = await supabaseAdmin
     .from("user_permissions")
     .select("permission_code")
     .eq("tenant_id", perfil.empresa_id)
     .eq("user_id", user.id)
+
+  if (rolesError || rolePermissionsError || userPermissionsError) {
+    throw new AuthError('Não foi possível consultar as permissões.', 500)
+  }
 
   const permissions = Array.from(new Set([
     ...(rolePermissions ?? []).map(item => item.permission_code),

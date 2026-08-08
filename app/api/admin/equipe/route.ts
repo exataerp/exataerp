@@ -1,61 +1,55 @@
-import { createClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
+import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
+import { assertAllowedOrigin, jsonNoStore, RequestValidationError } from '@/lib/auth-http'
+import { requireCurrentPrincipal, requireSystemManager } from '@/lib/auth-principal'
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    const token = authHeader.replace('Bearer ', '')
+    assertAllowedOrigin(request)
+    const principal = await requireCurrentPrincipal(request)
+    requireSystemManager(principal)
 
-    const supabaseAuth = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-
-    const { data: { user }, error: authErr } = await supabaseAuth.auth.getUser(token)
-    if (authErr || !user) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { data: acesso } = await supabaseAdmin
+    const { data: team, error } = await supabaseAdmin
       .from('controle_acesso')
-      .select('nivel')
-      .eq('user_id', user.id)
-      .single()
+      .select('*, perfis:user_id(email, nome)')
+      .eq('empresa_id', principal.empresaId)
+    if (error) throw error
 
-    if (!acesso || !['master', 'admin'].includes(acesso.nivel)) {
-      return NextResponse.json({ error: 'Acesso negado' }, { status: 403 })
+    const userIds = (team ?? []).map(({ user_id }) => user_id)
+    const authStates = new Map<string, { username: string; mustChangePassword: boolean }>()
+    for (const userId of userIds) {
+      const state = await supabaseAdmin.rpc('get_private_auth_state', { p_user_id: userId })
+      if (state.error) throw state.error
+      if (state.data?.length === 1 && typeof state.data[0].username === 'string') {
+        authStates.set(userId, {
+          username: state.data[0].username,
+          mustChangePassword: Boolean(state.data[0].must_change_password),
+        })
+      }
     }
+    const projectedTeam = (team ?? []).map((member) => ({
+      ...member,
+      perfis: member.perfis
+        ? {
+            ...member.perfis,
+            username: authStates.get(member.user_id)?.username ?? null,
+            must_change_password: authStates.get(member.user_id)?.mustChangePassword ?? false,
+          }
+        : null,
+    }))
+    const permissionsResult = userIds.length === 0
+      ? { data: [], error: null }
+      : await supabaseAdmin
+          .from('permissoes')
+          .select('*')
+          .eq('empresa_id', principal.empresaId)
+          .in('user_id', userIds)
+    if (permissionsResult.error) throw permissionsResult.error
 
-    const { empresa_id } = await req.json()
-
-    const { data: equipe, error: equipeError } = await supabaseAdmin
-      .from('controle_acesso')
-      .select('*, perfis:user_id(username, email, nome)')
-      .eq('empresa_id', empresa_id)
-
-    if (equipeError) throw equipeError
-
-    const equipeData = equipe || []
-    let permissoesData = []
-
-    if (equipeData.length > 0) {
-      const userIds = equipeData.map((u: any) => u.user_id)
-      const { data: permData, error: permError } = await supabaseAdmin
-        .from('permissoes')
-        .select('*')
-        .in('user_id', userIds)
-      
-      if (permError) throw permError
-      permissoesData = permData || []
+    return jsonNoStore({ equipe: projectedTeam, permissoes: permissionsResult.data ?? [] })
+  } catch (error) {
+    if (error instanceof RequestValidationError || error instanceof AuthError) {
+      return jsonNoStore({ error: error.message }, { status: error.status })
     }
-
-    return NextResponse.json({ equipe: equipeData, permissoes: permissoesData })
-    
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    return jsonNoStore({ error: 'Não foi possível carregar a equipe.' }, { status: 500 })
   }
 }

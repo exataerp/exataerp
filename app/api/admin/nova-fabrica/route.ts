@@ -1,159 +1,118 @@
-import { NextResponse } from 'next/server'
-
-import {
-  buildInternalAuthEmail,
-  normalizeOptionalEmail,
-  normalizeUsername,
-  validateOptionalEmail,
-  validatePassword,
-  validateUsername,
-} from '@/lib/auth-credentials'
-import {
-  assertSuperAdmin,
-  AuthError,
-  getUserFromToken,
-  supabaseAdmin,
-} from '@/lib/supabase/admin'
+import { buildInternalAuthEmail, normalizeOptionalEmail, normalizeUsername, validateOptionalEmail, validatePassword, validateUsername } from '@/lib/auth-credentials'
+import { assertAllowedOrigin, idempotencyDigest, jsonNoStore, readStrictJson, RequestValidationError, safeCorrelationId } from '@/lib/auth-http'
+import { requireCurrentPrincipal, requireSuperAdmin } from '@/lib/auth-principal'
+import { consumeSensitiveLimit, postgresRateLimitStore } from '@/lib/auth-rate-limit'
+import { compensateCreatedIdentity } from '@/lib/identity-compensation'
+import { finishIdentityFailure, idempotentResourceId, identityOperationDecision, nonSensitiveFingerprint } from '@/lib/identity-operation'
+import { AuthError, supabaseAdmin } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
-  let createdEmpresaId: string | null = null
-  let createdUserId: string | null = null
-
+  let empresaId: string | null = null
+  let userId: string | null = null
+  let operationId: string | null = null
+  let completionUncertain = false
+  const correlationId = safeCorrelationId(request)
   try {
-    const caller = await getUserFromToken(request)
-    await assertSuperAdmin(caller.id)
+    assertAllowedOrigin(request)
+    const principal = await requireCurrentPrincipal(request)
+    requireSuperAdmin(principal)
+    const limited = await consumeSensitiveLimit(request, {
+      operation: 'create_tenant_admin', empresaId: principal.empresaId, actorUserId: principal.userId,
+    }, postgresRateLimitStore(supabaseAdmin))
+    if (!limited.allowed) return jsonNoStore({ error: 'Muitas tentativas. Tente novamente mais tarde.' }, { status: 429, headers: { 'Retry-After': String(limited.retryAfter) } })
 
-    const body = await request.json()
-    const nomeFabrica = String(body.nomeFabrica ?? '').trim()
-    const nome = String(body.nome ?? '').trim() || 'Administrador'
+    const body = await readStrictJson<{ nomeFabrica?: unknown; nome?: unknown; username?: unknown; password?: unknown; email?: unknown }>(
+      request, ['nomeFabrica', 'nome', 'username', 'password', 'email'],
+    )
+    const companyName = String(body.nomeFabrica ?? '').trim()
+    const name = String(body.nome ?? '').trim() || 'Administrador'
     const username = normalizeUsername(body.username)
     const password = String(body.password ?? '')
-    const email = normalizeOptionalEmail(body.email)
+    const contactEmail = normalizeOptionalEmail(body.email)
+    const validationError = (!companyName ? 'Nome da empresa é obrigatório.' : null)
+      ?? validateUsername(username) ?? validatePassword(password) ?? validateOptionalEmail(contactEmail)
+    if (validationError) return jsonNoStore({ error: validationError }, { status: 400 })
 
-    const validationError =
-      (!nomeFabrica ? 'Nome da fábrica é obrigatório.' : null)
-      ?? validateUsername(username)
-      ?? validatePassword(password)
-      ?? validateOptionalEmail(email)
-
-    if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 })
-    }
-
-    const { data: existing } = await supabaseAdmin
-      .from('perfis')
-      .select('id')
-      .eq('username', username)
-      .maybeSingle()
-
-    if (existing) {
-      return NextResponse.json(
-        { error: 'Este nome de usuário já está em uso.' },
-        { status: 409 },
-      )
-    }
-
-    const { data: empresa, error: empresaError } = await supabaseAdmin
-      .from('empresas')
-      .insert([{ nome: nomeFabrica, status: 'ativo' }])
-      .select('id')
-      .single()
-
-    if (empresaError || !empresa) {
-      throw new Error(empresaError?.message || 'Não foi possível criar a empresa.')
-    }
-    createdEmpresaId = empresa.id
-
-    const { data: role, error: roleError } = await supabaseAdmin
-      .from('roles')
-      .select('id')
-      .eq('name', 'system_manager')
-      .single()
-
-    if (roleError || !role) throw new Error('Perfil de Administrador do Sistema não encontrado.')
-
-    const internalEmail = buildInternalAuthEmail(crypto.randomUUID())
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: internalEmail,
-      password,
-      email_confirm: true,
-      user_metadata: { nome, username },
-      app_metadata: {
-        empresa_id: empresa.id,
-        login_identifier: 'username',
-      },
+    const fingerprint = nonSensitiveFingerprint({ company_name: companyName, username, administrator_name: name })
+    const digest = idempotencyDigest(request, {
+      operation: 'create_tenant_admin', empresaId: principal.empresaId, actorUserId: principal.userId,
     })
-
-    if (authError || !authData.user) {
-      throw new Error(authError?.message || 'Não foi possível criar o administrador.')
-    }
-    createdUserId = authData.user.id
-
-    const writes = await Promise.all([
-      supabaseAdmin.from('perfis').insert({
-        id: createdUserId,
-        user_id: createdUserId,
-        username,
-        email,
-        nome,
-        status: 'ativo',
-        empresa_id: empresa.id,
-        tipo_usuario: 'admin',
-        first_access_completed: false,
-        must_change_password: true,
-        password_reset_required_at: new Date().toISOString(),
-        password_reset_by: caller.id,
-        updated_at: new Date().toISOString(),
-      }),
-      supabaseAdmin.from('controle_acesso').insert({
-        user_id: createdUserId,
-        empresa_id: empresa.id,
-        nivel: 'admin',
-        status: 'ativo',
-        activated_at: new Date().toISOString(),
-      }),
-      supabaseAdmin.from('user_roles').insert({
-        user_id: createdUserId,
-        empresa_id: empresa.id,
-        role_id: role.id,
-        granted_by: caller.id,
-      }),
-    ])
-
-    const writeError = writes.find((result) => result.error)?.error
-    if (writeError) throw new Error(writeError.message)
-
-    return NextResponse.json(
-      {
-        success: true,
-        message: 'Fábrica e administrador criados com senha definida.',
-        empresa_id: empresa.id,
-        user_id: createdUserId,
-        username,
-      },
-      { status: 201 },
-    )
-  } catch (error: unknown) {
-    if (createdUserId) {
-      await supabaseAdmin.from('user_roles').delete().eq('user_id', createdUserId)
-      await supabaseAdmin.from('controle_acesso').delete().eq('user_id', createdUserId)
-      await supabaseAdmin.from('perfis').delete().eq('user_id', createdUserId)
-      await supabaseAdmin.auth.admin.deleteUser(createdUserId)
-    }
-    if (createdEmpresaId) {
-      await supabaseAdmin.from('empresas').delete().eq('id', createdEmpresaId)
+    const createdEmpresaId = idempotentResourceId(digest)
+    empresaId = createdEmpresaId
+    const begun = await supabaseAdmin.rpc('begin_identity_operation', {
+      p_operation_type: 'create_tenant_admin', p_empresa_id: createdEmpresaId, p_idempotency_digest: digest,
+      p_request_fingerprint: fingerprint,
+      p_actor_user_id: principal.userId, p_target_user_id: null, p_username: username,
+    })
+    if (begun.error || begun.data?.length !== 1) throw new Error('operation_begin_failed')
+    const operation = begun.data[0]
+    operationId = operation.operation_id
+    const decision = identityOperationDecision(operation)
+    if (decision.kind === 'replay') return jsonNoStore(decision.result, { status: 200 })
+    if (decision.kind === 'conflict') {
+      return jsonNoStore({ error: 'Operação já está em andamento ou requer reconciliação.' }, { status: 409 })
     }
 
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: error.message }, { status: error.status })
+    const company = await supabaseAdmin.from('empresas').insert({
+      id: createdEmpresaId, nome: companyName, status: 'ativo',
+    })
+    if (company.error) throw new Error('company_create_failed')
+
+    const role = await supabaseAdmin.from('roles').select('id').eq('name', 'system_manager').single()
+    if (role.error || !role.data) throw new Error('administrator_role_missing')
+    const auth = await supabaseAdmin.auth.admin.createUser({
+      email: buildInternalAuthEmail(crypto.randomUUID()), password, email_confirm: true,
+      user_metadata: { nome: name },
+      app_metadata: { empresa_id: createdEmpresaId, login_identifier: 'username', credential_version: 1 },
+    })
+    userId = auth.data.user?.id ?? null
+    if (auth.error || !userId) throw new Error('auth_create_failed')
+
+    const profile = await supabaseAdmin.from('perfis').insert({
+      id: userId, user_id: userId, username, email: contactEmail, nome: name, status: 'ativo', empresa_id: createdEmpresaId,
+      tipo_usuario: 'admin', first_access_completed: false, updated_at: new Date().toISOString(),
+    })
+    if (profile.error) throw new Error('profile_create_failed')
+    const access = await supabaseAdmin.from('controle_acesso').insert({
+      user_id: userId, empresa_id: createdEmpresaId, nivel: 'admin', status: 'ativo', activated_at: new Date().toISOString(),
+    })
+    if (access.error) throw new Error('access_create_failed')
+    const roleWrite = await supabaseAdmin.from('user_roles').insert({
+      user_id: userId, empresa_id: createdEmpresaId, role_id: role.data.id, granted_by: principal.userId,
+    })
+    if (roleWrite.error) throw new Error('role_create_failed')
+
+    const completed = await supabaseAdmin.rpc('upsert_private_auth_state', {
+      p_operation_id: operationId, p_user_id: userId, p_username: username,
+      p_must_change_password: true, p_expected_state_version: null, p_correlation_id: correlationId,
+    })
+    if (completed.error) {
+      const recovered = await supabaseAdmin.rpc('get_private_auth_state', { p_user_id: userId })
+      if (!recovered.error && recovered.data?.[0]?.username === username) {
+        return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, status: 'completed' }, { status: 201 })
+      }
+      completionUncertain = Boolean(recovered.error)
+      throw new Error('private_state_completion_failed')
     }
-    const message = error instanceof Error ? error.message : 'Erro interno no servidor.'
-    const status = /duplicate key|unique constraint/i.test(message) ? 409 : 500
-    return NextResponse.json(
-      { error: status === 409 ? 'Este nome de usuário já está em uso.' : message },
-      { status },
-    )
+    return jsonNoStore({ success: true, empresa_id: createdEmpresaId, user_id: userId, username, status: 'completed' }, { status: 201 })
+  } catch (error) {
+    if (operationId && empresaId) {
+      const failureStatus = await compensateCreatedIdentity(supabaseAdmin, {
+        userId,
+        empresaId,
+        deleteEmpresa: true,
+        skipCleanup: completionUncertain,
+      })
+      try {
+        await finishIdentityFailure(supabaseAdmin, {
+          operationId, status: failureStatus,
+          failureCode: error instanceof Error ? error.message : 'unknown_failure', correlationId,
+        })
+      } catch { /* fail closed */ }
+    }
+    if (error instanceof RequestValidationError || error instanceof AuthError) return jsonNoStore({ error: error.message }, { status: error.status })
+    return jsonNoStore({ error: 'Não foi possível criar a empresa e o administrador.' }, { status: 500 })
   }
 }
