@@ -28,6 +28,7 @@ export interface EmpresaInfo {
   status: string
   onboarding_completed: boolean
   plano: string
+  subdomain: string
 }
 
 export interface SessionData {

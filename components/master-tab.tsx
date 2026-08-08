@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react"
 import { ShieldAlert, Users, Plus, Building2, AtSign, UserRound, LockKeyhole, Power, RefreshCw, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
+import { suggestTenantSlug } from "@/lib/tenant-host"
 
 export function MasterTab() {
   const supabase = createClient()
@@ -15,6 +16,7 @@ export function MasterTab() {
   const [acessoNegado, setAcessoNegado] = useState(false)
 
   const [novaEmpresa, setNovaEmpresa] = useState("")
+  const [novoSubdominio, setNovoSubdominio] = useState("")
   const [novoNome, setNovoNome] = useState("")
   const [novoUsername, setNovoUsername] = useState("")
   const [novaSenha, setNovaSenha] = useState("")
@@ -75,8 +77,8 @@ export function MasterTab() {
   }
 
   const handleCriarAcesso = async () => {
-    if (!novaEmpresa.trim() || !novoNome.trim() || !novoUsername.trim() || !novaSenha) {
-      toast({ title: "Dados incompletos", description: "Preencha empresa, administrador, nome de usuário e senha.", variant: "destructive" })
+    if (!novaEmpresa.trim() || !novoSubdominio.trim() || !novoNome.trim() || !novoUsername.trim() || !novaSenha) {
+      toast({ title: "Dados incompletos", description: "Preencha empresa, subdomínio, administrador, nome de usuário e senha.", variant: "destructive" })
       return
     }
 
@@ -85,9 +87,10 @@ export function MasterTab() {
       const headers = await authHeader()
       const response = await fetch('/api/admin/nova-fabrica', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...headers },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), ...headers },
         body: JSON.stringify({
           nomeFabrica: novaEmpresa.trim(),
+          subdomain: novoSubdominio.trim(),
           nome: novoNome.trim(),
           username: novoUsername.trim(),
           password: novaSenha,
@@ -98,8 +101,9 @@ export function MasterTab() {
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || "Erro desconhecido ao criar acesso.")
 
-      toast({ title: "Fábrica Operacional", description: "O administrador já pode entrar e deverá trocar a senha temporária no primeiro acesso." })
+      toast({ title: "Fábrica Operacional", description: `Acesso disponível em https://${result.subdomain}.exataerp.com.` })
       setNovaEmpresa("")
+      setNovoSubdominio("")
       setNovoNome("")
       setNovoUsername("")
       setNovaSenha("")
@@ -157,11 +161,30 @@ export function MasterTab() {
                 <input
                   type="text"
                   value={novaEmpresa}
-                  onChange={(e) => setNovaEmpresa(e.target.value)}
+                  onChange={(e) => {
+                    setNovaEmpresa(e.target.value)
+                    setNovoSubdominio(suggestTenantSlug(e.target.value))
+                  }}
                   placeholder="Indústria Exemplo Ltda"
                   className="w-full h-10 pl-10 pr-4 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Subdomínio do Cliente</label>
+              <div className="relative">
+                <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={novoSubdominio}
+                  onChange={(e) => setNovoSubdominio(e.target.value.toLowerCase())}
+                  placeholder="industria"
+                  autoComplete="off"
+                  className="w-full h-10 pl-10 pr-36 rounded-xl border border-border bg-input text-foreground text-sm outline-none focus:ring-2 focus:ring-primary transition-all"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">.exataerp.com</span>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Será o endereço exclusivo da empresa e não poderá se repetir.</p>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest pl-1">Nome do Administrador</label>
@@ -248,6 +271,7 @@ export function MasterTab() {
               <thead className="bg-muted/30 border-b border-border text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
                 <tr>
                   <th className="px-6 py-3">Empresa</th>
+                  <th className="px-6 py-3">Endereço</th>
                   <th className="px-6 py-3">ID de Registro</th>
                   <th className="px-6 py-3">Status</th>
                   <th className="px-6 py-3 text-right">Controle</th>
@@ -256,13 +280,13 @@ export function MasterTab() {
               <tbody className="divide-y divide-border">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-xs text-muted-foreground font-bold uppercase tracking-widest">
+                    <td colSpan={5} className="px-6 py-8 text-center text-xs text-muted-foreground font-bold uppercase tracking-widest">
                       Buscando banco de dados...
                     </td>
                   </tr>
                 ) : clientes.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-6 py-8 text-center text-xs text-muted-foreground font-bold uppercase tracking-widest">
+                    <td colSpan={5} className="px-6 py-8 text-center text-xs text-muted-foreground font-bold uppercase tracking-widest">
                       Nenhuma fábrica encontrada
                     </td>
                   </tr>
@@ -270,6 +294,18 @@ export function MasterTab() {
                   clientes.map((cliente) => (
                     <tr key={cliente.id} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-4 font-bold text-foreground">{cliente.nome || "Sem nome definido"}</td>
+                      <td className="px-6 py-4">
+                        {cliente.subdomain ? (
+                          <a
+                            href={`https://${cliente.subdomain}.exataerp.com`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-semibold text-primary hover:underline"
+                          >
+                            {cliente.subdomain}.exataerp.com
+                          </a>
+                        ) : <span className="text-xs text-muted-foreground">Não configurado</span>}
+                      </td>
                       <td className="px-6 py-4 text-muted-foreground text-[11px] font-mono">{cliente.id}</td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider ${cliente.status === 'inativo' ? 'bg-destructive/10 text-destructive' : 'bg-green-500/10 text-green-500'}`}>

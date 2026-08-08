@@ -16,9 +16,9 @@ const source = (relativePath: string) => readFileSync(
   'utf8',
 )
 
-test('middleware deixa APIs de autenticação responderem sem redirect HTML', () => {
-  const middleware = source('middleware.ts')
-  assert.match(middleware, /if \(isPublicAuthApiPath\(pathname\)\) return supabaseResponse/)
+test('proxy deixa APIs de autenticação responderem sem redirect HTML', () => {
+  const proxy = source('proxy.ts')
+  assert.match(proxy, /if \(isPublicAuthApiPath\(pathname\)\) return supabaseResponse/)
 
   const access = source('lib/password-access.ts')
   for (const path of ['/api/auth/session', '/api/auth/logout', '/api/auth/change-password']) {
@@ -89,7 +89,7 @@ test('troca de senha incrementa a credential version e o principal valida o toke
 
 test('bootstrap da senha do administrador fica restrito à Preview de homologação', () => {
   const route = source('app/api/internal/homolog/bootstrap-admin-password/route.ts')
-  const middleware = source('middleware.ts')
+  const proxy = source('proxy.ts')
 
   const validAccess = {
     vercel: '1',
@@ -104,7 +104,18 @@ test('bootstrap da senha do administrador fica restrito à Preview de homologaç
   assert.equal(HOMOLOG_ADMIN_UID, '7e22ded1-7712-4b3c-acc8-222aed508b57')
   assert.equal(HOMOLOG_ADMIN_USERNAME, 'admin')
   assert.match(route, /homologBootstrapAccessStatus/)
-  assert.match(middleware, /pathname === '\/api\/internal\/homolog\/bootstrap-admin-password'\) return NextResponse\.next\(\)/)
+  assert.match(proxy, /pathname === '\/api\/internal\/homolog\/bootstrap-admin-password'\) return NextResponse\.next\(\)/)
+})
+
+test('proxy remove tenant forjado e propaga somente o subdomínio extraído do host', () => {
+  const proxy = source('proxy.ts')
+  assert.match(proxy, /tenantSlugFromHostname/)
+  assert.match(proxy, /withTrustedTenantHeader/)
+
+  const login = source('app/api/auth/login/route.ts')
+  const principal = source('lib/auth-principal.ts')
+  assert.match(login, /requestMatchesCompanyTenant\(request, company\.data\.subdomain\)/)
+  assert.match(principal, /requestMatchesCompanyTenant\(request, companyResult\.data\.subdomain\)/)
 })
 
 test('bootstrap aceita apenas o estado inicial one-shot do admin de homologação', () => {

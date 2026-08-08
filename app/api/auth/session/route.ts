@@ -16,7 +16,7 @@ export async function GET(request: Request) {
         .single(),
       supabaseAdmin
         .from('empresas')
-        .select('id, nome, status, onboarding_completed, plano')
+        .select('id, nome, status, onboarding_completed, plano, subdomain')
         .eq('id', principal.empresaId)
         .single(),
       supabaseAdmin
