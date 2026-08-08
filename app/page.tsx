@@ -18,14 +18,15 @@ import { MaquinasTab } from "@/components/maquinas-tab"
 import { ManutencaoTab } from "@/components/manutencao-tab"
 import { EquipeTab } from "@/components/equipe-tab"
 import { AuditoriaTab } from "@/components/auditoria-tab"
+import { CadastrosTab } from "@/components/cadastros-tab"
 import { OnboardingChecklist } from "@/components/onboarding-checklist"
 import { PasswordChangeForm } from "@/components/auth/password-change-form"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { TimePicker } from "@/components/time-picker"
 import {
-  Settings, Sun, Moon, Monitor, BookText, BarChart2, ClipboardCheck,
-  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Factory, Wrench, Key,
-  Check, Tag, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users,
+  Settings, Sun, Moon, Monitor, BookText, ClipboardCheck,
+  CalendarClock, Menu, X, PanelLeftClose, PanelLeftOpen, Wrench, Key,
+  Check, Boxes, LineChart, Bell, LayoutDashboard, AlertTriangle, LogOut, Users,
   Plus, Trash2, Pause, FileSearch, ShieldCheck,
 } from "lucide-react"
 
@@ -33,13 +34,11 @@ type TabId = AbaId
 
 const NAV_ITEMS: { id: TabId; label: string; sublabel: string; icon: React.ElementType }[] = [
   { id: "dashboard",  label: "Dashboard",       sublabel: "Visão em tempo real",     icon: LayoutDashboard },
-  { id: "gbo",        label: "Produto/Roteiro", sublabel: "Gerenciamento Diário",    icon: BarChart2       },
+  { id: "cadastros",  label: "Cadastros",       sublabel: "Dados mestres",           icon: BookText        },
   { id: "pcp",        label: "PCP",             sublabel: "Programação de Produção", icon: CalendarClock   },
-  { id: "maquinas",   label: "Máquinas",         sublabel: "Postos de Trabalho",     icon: Factory         },
   { id: "manutencao", label: "Manutenção",        sublabel: "Gestão de Ativos",       icon: Wrench          },
   { id: "apontamento",label: "Apontamento",       sublabel: "Registro de Produção",   icon: ClipboardCheck  },
   { id: "estoque",    label: "Estoque",           sublabel: "Controle de Inventário", icon: Boxes           },
-  { id: "excecoes",   label: "Exceções",          sublabel: "Motivos de Parada",      icon: Tag             },
   { id: "relatorios", label: "Relatórios",        sublabel: "Análise de Desempenho",  icon: LineChart       },
   { id: "auditoria",  label: "Auditoria",         sublabel: "Histórico e estornos",   icon: FileSearch      },
 ]
@@ -1033,7 +1032,7 @@ export default function ExataApp() {
 
           <main className="flex-1 overflow-auto px-4 lg:px-8 py-6 print:p-12">
 
-            {canAccessActiveTab && empresaAtivaId && activeTab !== "configuracoes" && (
+            {canAccessActiveTab && empresaAtivaId && activeTab !== "configuracoes" && activeTab !== "cadastros" && (
               <OnboardingChecklist
                 empresaAtivaId={empresaAtivaId}
                 onGoToTab={(tab) => goTab(tab as any)}
@@ -1085,6 +1084,12 @@ export default function ExataApp() {
             {canAccessActiveTab && activeTab === "relatorios" && (
               <div className="animate-in fade-in duration-300">
                 <RelatoriosTab empresaAtivaId={empresaAtivaId} relatorioSelecionado={relatorioAtivo} onChangeRelatorio={setRelatorioAtivo} />
+              </div>
+            )}
+
+            {canAccessActiveTab && activeTab === "cadastros" && (
+              <div className="animate-in fade-in duration-300">
+                <CadastrosTab onNavigate={goTab} canAccess={canAccess} />
               </div>
             )}
 

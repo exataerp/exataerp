@@ -28,6 +28,7 @@ export type RoleName = typeof ROLES[keyof typeof ROLES]
 // ------------------------------------------------------------
 export const ABAS = {
   DASHBOARD:      'dashboard',
+  CADASTROS:      'cadastros',
   GBO:            'gbo',
   PCP:            'pcp',
   APONTAMENTO:    'apontamento',
@@ -58,6 +59,13 @@ export const ABA_ROLES: Record<AbaId, RoleName[]> = {
     ROLES.STOCK_USER,
     ROLES.QUALITY_MANAGER,
     ROLES.VIEWER,
+  ],
+  cadastros: [
+    ROLES.SYSTEM_MANAGER,
+    ROLES.PRODUCTION_MANAGER,
+    ROLES.MAINTENANCE_MANAGER,
+    ROLES.STOCK_MANAGER,
+    ROLES.QUALITY_MANAGER,
   ],
   gbo: [
     ROLES.SYSTEM_MANAGER,
